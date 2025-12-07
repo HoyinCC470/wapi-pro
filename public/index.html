@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>未湃 WAPI · AI Cloud Workspace</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <script type="module">
+        import autoAnimate from 'https://cdn.jsdelivr.net/npm/@formkit/auto-animate/index.min.js';
+        window.autoAnimate = autoAnimate;
+    </script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <style>
+        /* 3. 增加「噪點」 (Noise) - 針對亮色背景優化 */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            /* 黑色顆粒噪點 svg */
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
+            opacity: 0.6; /* 稍微增加不透明度以适应浅色背景 */
+            pointer-events: none;
+            z-index: 9999;
+            mix-blend-mode: multiply; 
+        }
+
+        /* 滾動條樣式 (適配亮色) */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+        
+        /* === Markdown 排版 (亮色模式適配) === */
+        .markdown-body { 
+            font-size: 1rem; 
+            line-height: 1.8; 
+            color: #374151;   /* gray-700 */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        }
+
+        .markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body blockquote { margin-bottom: 1.25rem; }
+        .markdown-body p:last-child { margin-bottom: 0; }
+
+        /* === 表格优化 (网格线) === */
+        .markdown-body table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1.5rem 0;
+            font-size: 0.9em;
+        }
+        .markdown-body th, .markdown-body td {
+            border: 1px solid #e5e7eb; /* 浅灰色网格线 */
+            padding: 0.75rem;
+            text-align: left;
+        }
+        .markdown-body th {
+            background-color: #f9fafb; /* 表头浅灰背景 */
+            font-weight: 600;
+            color: #111827;
+        }
+        .markdown-body tr:nth-child(even) {
+            background-color: #fcfcfc; /* 隔行微变色，增加可读性 */
+        }
+        
+
+        /* 標題 (深黑) - 权重降低到 600 */
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+            color: #111827; 
+            font-weight: 600; /* 原来是 700，改细一点 */
+            margin-top: 2rem; margin-bottom: 1rem; line-height: 1.3;
+        }
+
+        /* 新增：正文里的加粗文字 (**text**) 也改细 */
+        .markdown-body strong, .markdown-body b {
+            font-weight: 600; /* 默认是 700，改成 600 会清晰很多 */
+            color: #111827;   /* 加深颜色，弥补变细后的视觉重量 */
+        }
+        .markdown-body h1 { font-size: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5rem; }
+        
+        .markdown-body ul { list-style-type: disc; padding-left: 1.5rem; }
+        .markdown-body ol { list-style-type: decimal; padding-left: 1.5rem; }
+
+        /* 代码块 (保持深色，但由外层容器控制圆角) */
+        .markdown-body pre { 
+            background-color: #1f2937 !important; 
+            margin: 0 !important; /* 去掉 margin，交给 wrapper */
+            padding: 1rem; 
+            overflow-x: auto;
+            color: #f3f4f6;
+            border: none; /* 去掉边框 */
+            border-radius: 0 0 0.5rem 0.5rem; /* 只圆下角 */
+        }
+        
+        /* 代码块外层容器 (新增) */
+        .code-block-wrapper {
+            margin: 1.5rem 0;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+        }
+
+        /* 行內代碼 (浅色背景) */
+        .markdown-body :not(pre) > code { 
+            background-color: #f3f4f6; 
+            border: 1px solid #e5e7eb;
+            color: #d946ef; 
+            padding: 0.2em 0.4em; border-radius: 0.3rem; font-size: 0.85em; font-family: monospace;
+        }
+
+        .markdown-body blockquote {
+            border-left: 4px solid #3b82f6;
+            background-color: #f9fafb; 
+            padding: 0.5rem 1rem; color: #4b5563;
+            font-style: italic; border-radius: 0 0.5rem 0.5rem 0;
+        }
+
+        .markdown-body a { color: #2563eb; text-decoration: underline; text-underline-offset: 4px; }
+        .markdown-body a:hover { color: #1d4ed8; }
+        .markdown-body hr { border-color: #e5e7eb; margin: 2rem 0; }
+
+        /* 列表選中樣式 (亮色版 - 悬浮胶囊感) */
+        .history-item-active { 
+            background-color: #ffffff; 
+            color: #111827 !important; 
+            font-weight: 600;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            border-left: none !important; /* 去掉左边框，改用纯净卡片风 */
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        
+        /* 隱藏不想顯示的元素 */
+        .hidden { display: none; }
+
+        /* 输入框 Focus 时的光晕 - 移除默认 outline */
+        textarea:focus, 
+        input[type="text"]:focus, 
+        input[type="password"]:focus {
+            outline: none !important;
+        }
+        
+        /* 输入框容器光效 */
+        .input-glow:focus-within {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15), 
+                        0 0 20px rgba(59, 130, 246, 0.1), 
+                        0 8px 25px rgba(0,0,0,0.08);
+            border-color: rgba(59, 130, 246, 0.3) !important;
+        }
+        
+        /* 单独输入框的光效（认证输入框） */
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15), 
+                        0 0 15px rgba(59, 130, 246, 0.1);
+        }
+
+        /* === 字体大小控制 (Font Size Control) === */
+        /* 1. 标准 (默认) - 14px */
+        #chat-container.font-size-sm .markdown-body { font-size: 0.9rem; line-height: 1.7; }
+        
+        /* 2. 中等 - 16px */
+        #chat-container.font-size-base .markdown-body { font-size: 1.05rem; line-height: 1.8; }
+        
+        /* 3. 大号 - 18px */
+        #chat-container.font-size-lg .markdown-body { font-size: 1.2rem; line-height: 1.9; }
+
+        /* 按钮点击时的微动画 */
+        .btn-click-anim:active { transform: scale(0.95); }
+
+    </style>
+</head>
+<body class="bg-[#F0EEE9] text-gray-800 font-sans h-screen flex overflow-hidden selection:bg-blue-100 selection:text-blue-900">
+
+    <div id="auth-modal" class="fixed inset-0 z-50 bg-white/80 backdrop-blur-sm flex items-center justify-center p-4 transition-all duration-500">
+        <div class="bg-white border border-white/50 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] w-full max-w-md p-8 relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-purple-400"></div>
+            <div class="text-center mb-8">
+                <h2 class="text-2xl font-bold text-gray-900 mb-2">WAPI 智能工作台</h2>
+                <p class="text-gray-500 text-sm">登录以同步您的创意资产</p>
+            </div>
+            <div class="space-y-4" id="auth-form-container">
+                <input type="text" id="auth-username" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-gray-900 focus:border-blue-500 focus:bg-white outline-none transition-all" placeholder="用户名" autocomplete="off">
+                <input type="password" id="auth-password" class="w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-gray-900 focus:border-blue-500 focus:bg-white outline-none transition-all" placeholder="密码" autocomplete="off">
+                <input type="text" id="auth-registration-code" class="hidden w-full bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 text-gray-900 focus:border-blue-500 focus:bg-white outline-none transition-all" placeholder="注册码" autocomplete="off">
+                <div id="auth-error" class="hidden text-red-500 text-xs text-center bg-red-50 py-2 rounded border border-red-100"></div>
+                <button id="btn-login" class="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-lg transition-all shadow-lg shadow-gray-900/20">立即登录</button>
+                <button id="btn-register" class="w-full py-3 bg-transparent border border-gray-200 hover:border-gray-400 text-gray-500 hover:text-gray-700 font-medium rounded-lg transition-all">注册新账号</button>
+            </div>
+        </div>
+    </div>
+
+<aside class="w-64 min-w-[16rem] bg-white/60 backdrop-blur-xl border-r border-white/40 shadow-sm flex flex-col flex-shrink-0 z-20">
+        <div class="p-6 border-b border-gray-200/50 flex items-center">
+            <img src="./logo.png" alt="未湃 WAPI" class="h-19 w-auto object-contain mix-blend-multiply select-none">
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-4 space-y-6">
+            
+            <button onclick="startNewChat(true)" class="group w-full flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-blue-50 text-gray-800 font-bold border border-gray-200 hover:border-blue-200 rounded-xl shadow-sm hover:shadow-md transition-all">
+                <svg class="w-5 h-5 text-blue-500 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                <span>发起新对话</span>
+            </button>
+
+            <div>
+                <div class="flex items-center mb-3 pl-2 border-l-2 border-green-500">
+                    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider">最近对话</h3>
+                    </div>
+                <div class="space-y-1 min-h-[50px]" id="chat-history-list">
+                    <div class="text-xs text-gray-400 italic px-2">加载中...</div>
+                </div>
+            </div>
+
+        
+        </div> 
+
+        <div class="p-4 border-t border-gray-200/50 bg-white/30 backdrop-blur-sm">
+            <button onclick="openImageGallery()" class="group w-full flex items-center justify-center gap-2 px-4 py-3 bg-white hover:bg-purple-50 text-gray-700 font-bold border border-gray-200 hover:border-purple-200 rounded-xl shadow-sm hover:shadow-md transition-all">
+                <svg class="w-5 h-5 text-purple-500 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                <span>我的作品库</span>
+            </button>
+        </div>
+
+    </aside> 
+
+    <main class="flex-1 flex flex-col relative min-w-0">
+        <header class="h-16 border-b border-gray-200/50 bg-[#F0EEE9]/80 flex items-center px-6 justify-between backdrop-blur-md z-10 sticky top-0">
+            <div id="current-workflow-title" class="font-bold text-lg text-gray-800 flex items-center gap-2"></div>
+            <div class="flex items-center gap-3">
+                <div class="relative group z-50">
+                    <button class="flex items-center gap-2 px-4 py-2 bg-white/50 border border-gray-200 rounded-xl text-xs font-bold text-gray-600 shadow-sm transition-all hover:bg-white hover:text-gray-900 hover:shadow-md">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+                        <span>字体大小</span>
+                    </button>
+
+                    <div class="absolute top-full right-0 mt-2 w-24 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden transition-all duration-300 opacity-0 invisible transform translate-y-2 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 flex flex-col p-1">
+                        
+                        <div onclick="setFontSize(0)" class="cursor-pointer px-3 py-2 rounded-lg text-xs text-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors">
+                            小
+                        </div>
+                        
+                        <div onclick="setFontSize(1)" class="cursor-pointer px-3 py-2 rounded-lg text-xs text-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors">
+                            中
+                        </div>
+                        
+                        <div onclick="setFontSize(2)" class="cursor-pointer px-3 py-2 rounded-lg text-xs text-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 transition-colors">
+                            大
+                        </div>
+                    </div>
+                </div>
+                <div class="relative group z-50">
+                    <div class="cursor-pointer flex items-center gap-2 text-xs font-bold text-gray-700 bg-white/50 px-4 py-2 rounded-xl border border-gray-200 shadow-sm select-none transition-all hover:bg-white hover:shadow-md">
+                        <span id="header-username">未登录</span>
+                        <svg class="w-3 h-3 text-gray-400 group-hover:rotate-180 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </div>
+
+                    <div class="absolute top-full right-0 mt-2 w-32 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden transition-all duration-300 opacity-0 invisible transform translate-y-2 group-hover:opacity-100 group-hover:visible group-hover:translate-y-0 flex flex-col p-1">
+                        <button onclick="logout()" class="flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-xs font-bold text-red-500 hover:bg-red-50 transition-colors w-full">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                            退出登录
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div id="text-workflow" class="flex-1 flex flex-col overflow-hidden hidden">
+            <div id="chat-container" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 scroll-smooth"></div>
+            
+            <div class="p-6 border-t border-gray-200/50 bg-[#F0EEE9]/50 z-20 backdrop-blur-sm">
+                <div class="max-w-4xl mx-auto">
+                    <div class="bg-white border border-gray-200 shadow-[0_4px_20px_rgba(0,0,0,0.03)] rounded-2xl overflow-visible transition-shadow duration-300 focus-within:shadow-md focus-within:border-blue-300 group relative input-glow">
+                        
+                        <textarea id="chat-input" rows="1" class="w-full block bg-transparent border-none px-5 py-4 text-gray-800 placeholder-gray-400 focus:ring-0 resize-none overflow-hidden leading-relaxed max-h-[200px]" placeholder="Enter 换行，Ctrl + Enter 发送..." oninput="autoResizeTextarea(this)"></textarea>
+
+                        <div class="flex justify-between items-center px-3 pb-3 pt-1 border-t border-gray-50/50">
+                            
+                            <div class="flex items-center gap-2">
+                                <div class="relative">
+                                    <button onclick="toggleModelMenu(event)" class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 text-xs font-bold text-gray-600 transition-colors group/btn" title="切换模型">
+                                        <div class="w-5 h-5 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] shadow-sm">M</div>
+                                        <span id="current-model-name" class="truncate max-w-[100px]">DeepSeek V3.2</span>
+                                        <svg class="w-3 h-3 text-gray-400 group-hover/btn:text-gray-600 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                    </button>
+
+                                    <div id="model-dropdown" class="absolute bottom-full left-0 mb-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden transition-all duration-200 opacity-0 invisible transform translate-y-2 flex flex-col p-1 z-50">
+                                        <div id="model-list-container" class="max-h-[300px] overflow-y-auto">
+                                            </div>
+                                    </div>
+                                </div>
+
+                                <!-- 视觉模型时显示的选项 -->
+                                <div id="image-options" class="hidden flex items-center gap-2">
+                                    <div class="relative">
+                                        <select id="aspect-ratio-select" class="px-3 py-1.5 text-xs font-medium bg-gray-50 border border-gray-200 rounded-lg outline-none appearance-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 cursor-pointer">
+                                        </select>
+                                    </div>
+                                    <div class="relative">
+                                        <select id="resolution-select" class="px-3 py-1.5 text-xs font-medium bg-gray-50 border border-gray-200 rounded-lg outline-none appearance-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 cursor-pointer">
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-3">
+                                <button id="send-btn" class="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg shadow-md hover:shadow-lg transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"></path></svg>
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+                    <div class="text-center mt-2 flex justify-center gap-4">
+                         <p class="text-[10px] text-gray-400">AI 内容由大模型生成，请仔细甄别。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+<div id="gallery-modal" class="hidden fixed inset-0 z-50 bg-white/90 flex items-center justify-center p-4 backdrop-blur-md transition-all">
+    <div class="bg-white border border-gray-200 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col relative overflow-hidden">
+        
+        <div class="p-5 border-b border-gray-100 flex justify-between items-center bg-white z-10 shrink-0 gap-4">
+            <div class="flex flex-col md:flex-row md:items-center gap-2 md:gap-4 overflow-hidden">
+                <h2 class="text-lg font-bold text-gray-900 flex items-center gap-2 shrink-0">
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    我的创意资产
+                </h2>
+                <div class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-50 border border-yellow-200 text-yellow-700 text-xs truncate">
+                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    <span>注意: 图片链接有效期约24小时, 请及时保存, 过期无法找回。</span>
+                </div>
+            </div>
+
+            <button onclick="document.getElementById('gallery-modal').classList.add('hidden'); document.body.style.overflow = '';" class="text-gray-400 hover:text-gray-900 transition-colors shrink-0">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+
+        <div id="gallery-grid" class="flex-1 overflow-y-auto min-h-0 p-2 grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-1 content-start select-none bg-gray-50">
+        </div>
+
+        <div id="gallery-empty" class="hidden absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none">
+            <svg class="w-16 h-16 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+            <p class="text-sm">暂无生成记录，快去创作吧！</p>
+        </div>
+    </div>
+</div>
+
+<div id="detail-modal" class="hidden fixed inset-0 z-[60] bg-white/95 backdrop-blur-md flex items-center justify-center opacity-0 transition-opacity duration-300">
+    <button onclick="closeDetailModal()" class="absolute top-4 right-4 z-50 p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-full transition-all">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+    </button>
+
+    <div class="w-full h-full flex flex-col md:flex-row overflow-hidden">
+        
+        <div class="flex-1 flex items-center justify-center p-4 md:p-10 relative bg-gray-50" onclick="closeDetailModal()">
+            <img id="detail-img" src="" class="max-w-full max-h-full object-contain shadow-2xl rounded-lg transition-transform duration-300">
+        </div>
+
+        <div class="w-full md:w-96 bg-white border-l border-gray-200 flex flex-col h-full shrink-0" onclick="event.stopPropagation()"> <div class="p-6 border-b border-gray-100">
+                <h3 class="text-lg font-bold text-gray-900 mb-1">作品详情</h3>
+                <p id="detail-date" class="text-xs text-gray-500">2024/01/01</p>
+            </div>
+            
+            <div class="flex-1 overflow-y-auto p-6 space-y-6">
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">提示词 (Prompt)</label>
+                    <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        <p id="detail-prompt" class="text-sm text-gray-700 leading-relaxed break-words font-mono select-text"></p>
+                    </div>
+                    <button onclick="copyPrompt()" class="mt-2 text-xs text-blue-600 hover:text-blue-500 flex items-center gap-1">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"></path></svg>
+                        复制提示词
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">分辨率</label>
+                        <p id="detail-res" class="text-sm text-gray-700 font-mono bg-gray-100 px-2 py-1 rounded inline-block">1024x1024</p>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">模型</label>
+                        <p id="detail-model" class="text-sm text-gray-700 truncate" title="">-</p>
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">风格</label>
+                        <p id="detail-style" class="text-sm text-gray-700 capitalize">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 border-t border-gray-100 bg-white z-10">
+                <a id="detail-download" href="#" target="_blank" class="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg transition-all shadow-lg shadow-blue-500/20">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    下载原图 / 打开链接
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // === 自定义 Markdown 渲染器 (支持代码复制 & 语言显示) ===
+    const renderer = new marked.Renderer();
+    
+    renderer.code = function(code, language) {
+        // 1. 高亮处理
+        const validLang = !!(language && hljs.getLanguage(language));
+        const highlighted = validLang ? hljs.highlight(code, { language }).value : hljs.highlightAuto(code).value;
+        const langLabel = language ? language : 'Text';
+
+        // 2. 对代码内容进行 URL 编码，存入 hidden 属性中，方便复制时提取原始内容
+        const rawCode = encodeURIComponent(code);
+
+        // 3. 返回构建好的 HTML 结构 (Header + Pre)
+        return `
+        <div class="code-block-wrapper group">
+            <div class="flex items-center justify-between px-4 py-2 bg-gray-100 border-b border-gray-200">
+                <span class="text-xs font-bold text-gray-500 uppercase font-mono">${langLabel}</span>
+                <button onclick="copyCode(this)" data-code="${rawCode}" class="text-xs text-gray-500 hover:text-blue-600 flex items-center gap-1 transition-colors focus:outline-none">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    <span>复制</span>
+                </button>
+            </div>
+            <pre><code class="hljs ${language}">${highlighted}</code></pre>
+        </div>
+        `;
+    };
+
+    // 应用 table 的默认样式
+    renderer.table = function(header, body) {
+        return `<div class="overflow-x-auto"><table class="w-full border-collapse my-4">${header}${body}</table></div>`;
+    };
+
+    marked.use({ renderer, breaks: true, gfm: true });
+
+    // === 复制代码功能的实现 ===
+    function copyCode(btn) {
+        // 从 data-code 属性中取出原始内容并解码
+        const rawCode = decodeURIComponent(btn.getAttribute('data-code'));
+        
+        navigator.clipboard.writeText(rawCode).then(() => {
+            // 复制成功的视觉反馈
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = `<svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><span class="text-green-600 font-bold">已复制</span>`;
+            
+            setTimeout(() => {
+                btn.innerHTML = originalHTML;
+            }, 2000);
+        }).catch(err => {
+            console.error('复制失败:', err);
+            alert("复制失败，请手动复制");
+        });
+    }
+
+// === 1. 配置中心 ===
+    const API_BASE = "/api/ai"; 
+    const BACKEND_URL = "/api"; 
+    const API_KEY = "";
+
+    // === 2. 状态管理 ===
+    let state = {
+        workflow: 'text',
+        textModelKey: "DeepSeek V3.2",
+        imageModelKey: "Kwai Kolors",
+        chatHistoryId: null,
+        messages: []
+    };
+    
+    let isChatProcessing = false;
+    let authToken = localStorage.getItem('wapi_token');
+    
+    // === 新增：用于中断请求的控制器 ===
+    let abortController = null; 
+
+    // === 切换 发送/停止 按钮样式 (修复悬停颜色) ===
+    function updateInputUI(isGenerating) {
+        const btn = document.getElementById('send-btn');
+        const input = document.getElementById('chat-input');
+        
+        if (isGenerating) {
+            // === 🛑 停止状态 ===
+            // 1. 清除旧的蓝色样式
+            btn.classList.remove('text-blue-500', 'hover:bg-blue-500');
+            
+            // 2. 添加新的红色样式 (平时红字，悬停红底白字)
+            btn.classList.add('text-red-500', 'hover:bg-red-500', 'hover:text-white');
+            
+            // 3. 换成停止图标 (SVG 内部去掉 text-red-500，由父级控制颜色)
+            btn.innerHTML = `<svg class="w-5 h-5 animate-pulse" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"></path></svg>`;
+            btn.title = "停止生成";
+            
+            // 4. 锁定输入框
+            input.disabled = true;
+            input.placeholder = "AI 正在思考中 (点击右侧按钮停止)...";
+            input.classList.add('bg-gray-50'); 
+        } else {
+            // === 🚀 发送状态 ===
+            // 1. 清除红色样式
+            btn.classList.remove('text-red-500', 'hover:bg-red-500');
+            
+            // 2. 恢复蓝色样式
+            btn.classList.add('text-blue-500', 'hover:bg-blue-500', 'hover:text-white');
+
+            // 3. 换成发送图标
+            btn.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"></path></svg>`;
+            btn.title = "发送消息";
+            
+            // 4. 解锁输入框
+            input.disabled = false;
+            input.placeholder = "Enter 换行，Ctrl + Enter 发送...";
+            input.classList.remove('bg-gray-50');
+            input.focus();
+        }
+    }
+    
+    const TEXT_MODELS_MAP = { 
+        "DeepSeek V3.2": "deepseek-ai/DeepSeek-V3.2", 
+        "Qwen3 32B": "Qwen/Qwen3-32B", 
+        "Qwen Coder 480B": "Qwen/Qwen3-coder-480b-a35b-instruct" 
+    };
+    const IMAGE_MODELS_MAP = { 
+        "Kwai Kolors": "Kwai-Kolors/Kolors", 
+        "Qwen Image": "Qwen/Qwen-Image", 
+        "Tongyi Turbo": "Tongyi-MAI/Z-Image-Turbo" 
+    };
+
+    // === 未湃 WAPI 专属系统人设 ===
+    const SYSTEM_PROMPT = `
+    你现在是【未湃 WAPI】的专属智能导师引擎。
+    你的核心职责是服务 10-18 岁的中国大陆学生，引导他们在“英文演讲”和“AI 电影创作”领域探索。
+
+    ### 你的身份与性格
+    1.  **品牌身份**：你是未湃 WAPI 的 AI 助教，名字叫“小湃“。
+    2.  **性格基调**：鼓励型、启发式、专业但幽默、富有极客精神。像一位很酷的学长/学姐。
+    3.  **沟通对象**：10-18 岁青少年。请使用生动、易懂、有感染力的语言，避免枯燥的说教。
+
+    ### 你的两大核心业务知识库
+    1.  **未湃 WAPI 英文演讲活动**：
+        * **指导重点**：关注逻辑结构（Opening/Body/Conclusion）、批判性思维、公众演讲自信心、发音语调。
+        * **风格**：鼓励学生用英语讲好中国故事，具备国际视野。
+        * **互动**：如果学生发来演讲稿，请从“结构清晰度”、“语言感染力”和“观点深度”三个维度点评。
+
+    2.  **未湃 WAPI·AI 电影课程**：
+        * **指导重点**：AIGC 工具应用（MJ/SD/Runway）、分镜设计、剧本创意、视觉美学。
+        * **风格**：强调“科技+艺术”的结合，鼓励天马行空的想象力。
+        * **互动**：引导学生写出更好的 Prompt（提示词），帮助他们把脑海中的画面转化为文字描述。
+
+    ### 回复原则
+    1.  **引导优于直接给答案**：当学生问“帮我写个演讲稿”时，先问他的主题想法，引导他构建大纲，而不是直接甩出一篇文章。
+    2.  **正向反馈**：无论学生做得如何，先肯定他们的尝试，再给出改进建议（三明治沟通法）。
+    3.  **安全底线**：严格过滤任何不适合未成年人的内容（暴力、色情、过度消极）。
+    4.  **格式美观**：多使用 Markdown 格式（列表、加粗）让阅读体验更棒。
+
+    ### 场景示例
+    * 用户问：“我不敢上台演讲。” -> 你要用未湃的价值观鼓励他，分享克服紧张的小技巧。
+    * 用户问：“画一只猫。” -> 你要引导他：“你想画一只什么样的猫？是赛博朋克风格的机械猫，还是宫崎骏风格的魔法猫？让我们一起把 Prompt 写得更具体。”
+    `;
+    const ASPECT_RATIOS = { 
+        "1:1": ["1024x1024", "768x768"], 
+        "3:4": ["864x1152", "768x1024"], 
+        "4:3": ["1152x864", "1024x768"], 
+        "9:16": ["1080x1920", "720x1280"],
+        "16:9": ["1920x1080", "1280x720"] 
+    };
+
+    // === 字体管理 ===
+    const FONT_SIZES = ['font-size-sm', 'font-size-base', 'font-size-lg'];
+    let currentFontIndex = parseInt(localStorage.getItem('wapi_font_index')) || 0;
+
+    // (新版) 直接设置指定大小 (0:小, 1:中, 2:大)
+    function setFontSize(index) {
+        const container = document.getElementById('chat-container');
+        if(!container) return;
+
+        // 1. 移除所有字体类
+        FONT_SIZES.forEach(cls => container.classList.remove(cls));
+        
+        // 2. 添加目标字体类
+        container.classList.add(FONT_SIZES[index]);
+        
+        // 3. 更新状态并保存
+        currentFontIndex = index;
+        localStorage.setItem('wapi_font_index', index);
+        
+        // 4. 控制台调试
+        console.log("Font set to:", FONT_SIZES[index]);
+    }
+
+    // 初始化字体 (需要在页面加载时调用)
+    function applySavedFontSize() {
+        const container = document.getElementById('chat-container');
+        if(container) {
+            // 清理可能存在的默认类
+            FONT_SIZES.forEach(c => container.classList.remove(c));
+            // 应用保存的类
+            container.classList.add(FONT_SIZES[currentFontIndex]);
+        }
+    }
+
+    // === 3. 初始化 ===
+    function init() {
+        // ... (保留原来的代码)
+        // renderSidebar(); // ❌ 这行可以删掉或者留着也没事(因为sidebar里没列表了)
+        renderRatioOptions();
+        checkLoginState();
+        updateWorkflowUI();
+
+        // 🆕 初始化输入框里的模型名
+        const nameEl = document.getElementById('current-model-name');
+        if(nameEl) nameEl.innerText = state.workflow === 'text' ? state.textModelKey : state.imageModelKey;
+
+        // ... (保留 autoAnimate 代码)
+    }
+
+    // === 4. UI 逻辑 ===
+    window.switchModel = (type, key) => {
+        state.workflow = type;
+        if (type === 'text') state.textModelKey = key;
+        if (type === 'image') state.imageModelKey = key;
+        renderSidebar();
+        updateWorkflowUI();
+    };
+
+    function updateWorkflowUI() {
+        const textFlow = document.getElementById('text-workflow');
+        const title = document.getElementById('current-workflow-title');
+        const imageOptions = document.getElementById('image-options');
+
+        // 始终显示文本工作流
+        textFlow.classList.remove('hidden');
+
+        if (state.workflow === 'text') {
+            title.innerHTML = `智能对话 <span class="text-gray-400 text-sm font-normal ml-2">/ ${state.textModelKey}</span>`;
+            // 隐藏图像选项
+            if(imageOptions) imageOptions.classList.add('hidden');
+            // 更新模型名称显示
+            const nameEl = document.getElementById('current-model-name');
+            if(nameEl) nameEl.innerText = state.textModelKey;
+            // 更新输入框提示
+            const input = document.getElementById('chat-input');
+            if(input) input.placeholder = "Enter 换行，Ctrl + Enter 发送...";
+        
+        } else {
+            title.innerHTML = `视觉生成 <span class="text-gray-400 text-sm font-normal ml-2">/ ${state.imageModelKey}</span>`;
+            // 显示图像选项
+            if(imageOptions) imageOptions.classList.remove('hidden');
+            // 更新模型名称显示
+            const nameEl = document.getElementById('current-model-name');
+            if(nameEl) nameEl.innerText = state.imageModelKey;
+            // 更新输入框提示
+            const input = document.getElementById('chat-input');
+            if(input) input.placeholder = "输入画面描述 (提示词)，Enter 换行，Ctrl + Enter 生成...";
+        }
+    }
+
+    // === 5. 核心：数据交互 ===
+    async function loadChatList() {
+        if (!authToken) return;
+        try {
+            const res = await fetch(`${BACKEND_URL}/chat/list`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            if (res.status === 401) { logout(); return; } 
+            const chats = await res.json();
+            
+            const listEl = document.getElementById('chat-history-list');
+            
+            if (!chats || chats.length === 0) {
+                listEl.innerHTML = '<div class="text-xs text-gray-400 italic px-2">暂无历史记录</div>';
+                return;
+            }
+
+            // 修改：将 text-xs 改为 text-sm (放大字体)，并保留悬停删除功能
+            listEl.innerHTML = chats.map(chat => `
+                <div onclick="loadChatDetail('${chat._id}')" class="group relative flex items-center justify-between cursor-pointer px-3 py-2 rounded text-sm text-gray-600 hover:bg-white hover:text-gray-900 transition-colors ${state.chatHistoryId === chat._id ? 'history-item-active' : ''}">
+                    <span class="truncate pr-2 select-none">${chat.title}</span>
+                    
+                    <button onclick="deleteChat(event, '${chat._id}')" class="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-all flex-shrink-0" title="删除此对话">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                </div>
+            `).join('');
+
+            if (!state.chatHistoryId && chats.length > 0 && state.messages.length === 0) {
+                loadChatDetail(chats[0]._id);
+            }
+        } catch (err) {
+            console.error("列表加载失败:", err);
+        }
+    }
+
+    async function loadChatDetail(chatId) {
+        state.chatHistoryId = chatId;
+        const items = document.querySelectorAll('#chat-history-list > div');
+        items.forEach(el => {
+            if(el.getAttribute('onclick').includes(chatId)) {
+                el.classList.add('history-item-active');
+            } else {
+                el.classList.remove('history-item-active');
+            }
+        });
+
+        try {
+            const res = await fetch(`${BACKEND_URL}/chat/${chatId}`, {
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            const chat = await res.json();
+            state.messages = chat.messages || [];
+            
+            // 检测是否是图像对话（如果第一条助手消息是URL，则认为是图像对话）
+            if (state.messages.length > 0) {
+                const firstAssistantMsg = state.messages.find(m => m.role === 'assistant');
+                if (firstAssistantMsg && (firstAssistantMsg.content.startsWith('http://') || firstAssistantMsg.content.startsWith('https://'))) {
+                    // 自动切换到图像工作流
+                    state.workflow = 'image';
+                    updateWorkflowUI();
+                }
+            }
+            
+            renderChatHistory();
+        } catch (err) { console.error(err); }
+    }
+
+    function startNewChat(clearUI = true) {
+        state.chatHistoryId = null;
+        state.messages = [];
+        if (clearUI) {
+            renderChatHistory();
+            const items = document.querySelectorAll('#chat-history-list > div');
+            items.forEach(el => el.classList.remove('history-item-active'));
+        }
+    }
+
+    async function saveMessageToBackend(role, content) {
+        if (!authToken) return;
+        if (!state.chatHistoryId) {
+            try {
+                const res = await fetch(`${BACKEND_URL}/chat/new`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                    body: JSON.stringify({ firstMessage: content })
+                });
+                if (!res.ok) throw new Error("创建会话失败");
+                const newChat = await res.json();
+                state.chatHistoryId = newChat._id; 
+                await loadChatList(); 
+                return; 
+            } catch (e) {
+                console.error("创建会话报错:", e);
+                return;
+            }
+        }
+        try {
+            await fetch(`${BACKEND_URL}/chat/${state.chatHistoryId}/message`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                body: JSON.stringify({ role, content })
+            });
+            if (role === 'user') loadChatList(); 
+        } catch (e) { console.error("保存消息报错:", e); }
+    }
+
+    async function generateSmartTitle(chatId, conversation) {
+        let finalTitle = "新对话";
+        try {
+            const firstUserMsg = conversation.find(m => m.role === 'user');
+            if (firstUserMsg && firstUserMsg.content) {
+                finalTitle = firstUserMsg.content.substring(0, 10).replace(/\n/g, ' ');
+            }
+        } catch (e) {}
+
+        // 统一使用AI生成标题（图像对话和文本对话都使用）
+        const context = conversation.slice(0, 2).map(m => {
+            // 如果是图像URL，替换为描述
+            const content = (m.content && (m.content.startsWith('http://') || m.content.startsWith('https://'))) 
+                ? '[图像]' 
+                : m.content;
+            return `${m.role}: ${content}`;
+        }).join('\n');
+        const prompt = `请阅读以下对话，生成一个极其简短的标题（不超过10个字）。\n对话内容：\n${context}`;
+
+        try {
+            // 图像对话使用 Qwen3 32B，文本对话使用当前选中的模型
+            const summaryModel = state.workflow === 'image' 
+                ? TEXT_MODELS_MAP["Qwen3 32B"] || "Qwen/Qwen3-32B"
+                : (TEXT_MODELS_MAP[state.textModelKey] || "deepseek-ai/DeepSeek-V3.2");
+
+            let res = await fetch(`${API_BASE}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                body: JSON.stringify({
+                    model: summaryModel, 
+                    messages: [{ role: "user", content: prompt }],
+                    stream: false,
+                    enable_thinking: false
+                })
+            });
+            
+            if (res.ok) {
+                const data = await res.json();
+                let aiTitle = data.choices?.[0]?.message?.content?.trim();
+                if (aiTitle) finalTitle = aiTitle.replace(/["《》]/g, '');
+            }
+            
+            // 更新后端标题
+            await fetch(`${BACKEND_URL}/chat/${chatId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                body: JSON.stringify({ title: finalTitle })
+            });
+            
+            // 刷新侧边栏
+            loadChatList();
+        } catch (e) { 
+            console.error("标题生成失败", e); 
+        }
+    }
+
+    // === 新增：停止生成逻辑 ===
+    function stopGeneration() {
+        if (abortController) {
+            abortController.abort(); // 1. 中断网络请求
+            abortController = null;
+        }
+        isChatProcessing = false;
+        
+        // 2. 界面恢复
+        updateInputUI(false);
+        
+        // 3. 给对话框最后追加一个 [已停止] 的提示 (可选)
+        const container = document.getElementById('chat-container');
+        if (container) {
+            const loadingDiv = container.querySelector('#loading-text')?.closest('.flex');
+            if (loadingDiv) loadingDiv.remove();
+            
+            const bubbles = container.querySelectorAll('.markdown-body');
+            if(bubbles.length > 0 && state.messages.length > 0) {
+                const lastMsg = state.messages[state.messages.length - 1];
+                // 只有当最后一条是 AI 发的消息时才追加
+                if (lastMsg.role === 'assistant' && lastMsg.content) {
+                    const lastBubble = bubbles[bubbles.length - 1];
+                    lastBubble.insertAdjacentHTML('beforeend', '<span class="text-xs text-red-400 ml-2 select-none"> (已手动停止)</span>');
+                }
+            }
+        }
+    }
+
+    // === 6. 渲染与发送 ===
+    function renderChatHistory() {
+        const container = document.getElementById('chat-container');
+        if (state.messages.length === 0) {
+            container.innerHTML = `
+            <div class="flex flex-col items-center justify-center mt-20 space-y-4 px-4">
+                <div class="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mb-2">
+                    <svg class="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                </div>
+                <h3 class="text-lg font-bold text-gray-800">Hi，同学你好！我是未湃 WAPI 智能导师</h3>
+                <p class="text-sm text-gray-500 text-center max-w-md leading-relaxed">
+                    无论你想在这个舞台上<span class="text-blue-600 font-bold">自信演讲</span>，<br>
+                    还是想用 AI 创造一部<span class="text-purple-600 font-bold">属于你的电影</span>，<br>
+                    我都随时准备好为你提供灵感！
+                </p>
+                <div class="flex gap-2 mt-4">
+                    <button onclick="document.getElementById('chat-input').value='帮我把这篇演讲稿润色得更有气势一点';document.getElementById('chat-input').focus();" class="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-full text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors">🎤 润色演讲稿</button>
+                    <button onclick="document.getElementById('chat-input').value='我想做一个赛博朋克风格的微电影，给我一些分镜灵感';document.getElementById('chat-input').focus();" class="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-full text-gray-600 hover:border-purple-400 hover:text-purple-600 transition-colors">🎬 电影分镜灵感</button>
+                </div>
+            </div>
+        `;
+            return;
+        }
+        
+        container.innerHTML = state.messages.map(msg => {
+            const isUser = msg.role === 'user';
+            
+            // 检测是否是图像消息（URL格式）
+            const isImageUrl = !isUser && (msg.content.startsWith('http://') || msg.content.startsWith('https://') || msg.content.match(/\.(jpg|jpeg|png|gif|webp)$/i));
+            
+            // ✅ 修改重点：消息气泡的亮色样式
+            // User: 蓝色淡背景，蓝色文字
+            // AI: 白色背景，白色阴影，深色文字（或图像）
+            let contentHtml = '';
+            if (isImageUrl) {
+                // 图像消息 - 进一步压缩图像显示尺寸，限制最大高度为300px
+                contentHtml = `
+                    <div class="w-full">
+                        <img src="${msg.content}" alt="生成的图像" class="w-full max-w-full h-auto rounded-lg shadow-md mb-2" style="max-width: 100%; max-height: 300px; width: auto; height: auto; object-fit: contain;" onerror="this.parentElement.innerHTML='<p class=\\'text-red-500 text-sm\\'>图像加载失败</p>'">
+                        <a href="${msg.content}" target="_blank" class="text-xs text-blue-600 hover:text-blue-500">打开原图</a>
+                    </div>
+                `;
+            } else {
+                // 文本消息
+                contentHtml = isUser ? msg.content : marked.parse(msg.content);
+            }
+            
+            return `
+                <div class="flex ${isUser ? 'flex-row-reverse' : 'flex-row'} items-start gap-2 msg-animate">
+                    <div class="flex-1 min-w-0 flex ${isUser ? 'justify-end' : 'justify-start'}">
+                            <div class="markdown-body ${isUser ? 'bg-blue-50/50 border-blue-100 text-gray-800' : 'bg-white border-gray-100 shadow-sm text-gray-800'} border px-5 py-3.5 rounded-2xl ${isUser ? 'rounded-tr-sm' : 'rounded-tl-sm'} text-sm leading-relaxed ${!isUser ? 'max-w-[50%]' : ''}">${contentHtml}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        container.scrollTop = container.scrollHeight;
+    }
+
+    async function sendTextMessage() {
+        // 【逻辑分支 1】如果正在生成，点击按钮则视为"停止"
+        if (isChatProcessing) {
+            stopGeneration();
+            return;
+        }
+
+        const input = document.getElementById('chat-input');
+        const prompt = input.value.trim();
+        if (!prompt) return;
+
+        // 【准备工作】初始化控制器和 UI
+        abortController = new AbortController(); // 创建新控制器
+        isChatProcessing = true;
+        updateInputUI(true); // 切换为"停止"状态
+
+        state.messages.push({ role: "user", content: prompt });
+        input.value = '';
+        input.style.height = 'auto';
+        renderChatHistory();
+
+        await saveMessageToBackend("user", prompt); 
+
+        const container = document.getElementById('chat-container');
+        
+        // 根据工作流类型决定处理方式
+        if (state.workflow === 'image') {
+            // 图像生成流程
+            // 记录生成开始时的对话ID，用于后续检查
+            const generatingChatId = state.chatHistoryId;
+            
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = "flex flex-row items-start gap-2";
+            loadingDiv.innerHTML = `<div class="flex-1 min-w-0 flex justify-start"><div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]"><span class="animate-pulse text-gray-500" id="loading-text">正在生成图像...</span></div></div>`;
+            container.appendChild(loadingDiv);
+            container.scrollTop = container.scrollHeight;
+
+            try {
+                const resolution = document.getElementById('resolution-select').value;
+                const aspectRatio = document.getElementById('aspect-ratio-select').value;
+                
+                const res = await fetch(`${API_BASE}/images/generations`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                    body: JSON.stringify({ 
+                        model: IMAGE_MODELS_MAP[state.imageModelKey] || "Kwai-Kolors/Kolors", 
+                        prompt: prompt, 
+                        size: resolution,
+                        style: "none" // 不再使用风格预设
+                    }),
+                    signal: abortController.signal
+                });
+                
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+                
+                // 检查生成完成时是否还在同一个对话中
+                if (state.chatHistoryId !== generatingChatId) {
+                    // 已经切换到其他对话，不更新当前UI，只保存到后端
+                    console.log("图像生成完成，但已切换到其他对话，静默保存到原对话");
+                    // 直接保存消息到生成时的对话
+                    try {
+                        await fetch(`${BACKEND_URL}/chat/${generatingChatId}/message`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                            body: JSON.stringify({ role: "assistant", content: data.url })
+                        });
+                        
+                        // 检查是否需要生成标题（需要先获取对话消息数量）
+                        const chatRes = await fetch(`${BACKEND_URL}/chat/${generatingChatId}`, {
+                            headers: { 'Authorization': `Bearer ${authToken}` }
+                        });
+                        if (chatRes.ok) {
+                            const chat = await chatRes.json();
+                            const messages = chat.messages || [];
+                            if (messages.length === 2) {
+                                generateSmartTitle(generatingChatId, messages);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("保存到原对话失败:", e);
+                    }
+                } else {
+                    // 还在同一个对话中，正常更新UI
+                    if(loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+                    
+                    state.messages.push({ role: "assistant", content: data.url });
+                    renderChatHistory();
+                    await saveMessageToBackend("assistant", data.url);
+                    
+                    if (state.messages.length === 2 && state.chatHistoryId) {
+                        generateSmartTitle(state.chatHistoryId, state.messages);
+                    }
+                }
+                
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log("用户手动停止生成");
+                    // 只有在同一个对话中才保存停止状态
+                    if (state.chatHistoryId === generatingChatId && state.messages[state.messages.length-1].content) {
+                       await saveMessageToBackend("assistant", state.messages[state.messages.length-1].content);
+                    }
+                } else {
+                    console.error(error);
+                    // 只有在同一个对话中才显示错误
+                    if (state.chatHistoryId === generatingChatId) {
+                        if(loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+                        state.messages.push({ role: "assistant", content: "❌ 出错: " + error.message });
+                        renderChatHistory();
+                    }
+                }
+            } finally {
+                // 只有在同一个对话中才移除loading和恢复UI
+                if (state.chatHistoryId === generatingChatId) {
+                    if (loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+                    isChatProcessing = false;
+                    abortController = null;
+                    updateInputUI(false);
+                } else {
+                    // 已切换对话，只清理状态
+                    isChatProcessing = false;
+                    abortController = null;
+                }
+            }
+            return;
+        }
+
+            // 文本对话流程
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = "flex flex-row items-start gap-2"; // gap 改小一点
+            // 删除了 <div class="w-8 h-8 ...">AI</div>
+            loadingDiv.innerHTML = `<div class="flex-1 min-w-0 flex justify-start"><div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]"><span class="animate-pulse text-gray-500" id="loading-text">Thinking...</span></div></div>`;
+            container.appendChild(loadingDiv);
+            container.scrollTop = container.scrollHeight;
+
+        try {
+            // 1. 准备上下文 (取最近 10 条)
+            const context = state.messages.map(m=>({role:m.role, content:m.content})).slice(-10);
+            
+            // 2. 【关键】植入未湃 WAPI 的系统人设 (System Prompt)
+            // 将 system message 放在数组最前面
+            const finalMessages = [
+                { role: "system", content: SYSTEM_PROMPT },
+                ...context
+            ];
+
+            const payload = { 
+                model: TEXT_MODELS_MAP[state.textModelKey], 
+                messages: finalMessages, // 使用带有 system prompt 的完整消息列表
+                stream: true, 
+                enable_thinking: false 
+            };
+            
+            // 【关键点】fetch 请求加入 signal: abortController.signal
+            let res = await fetch(`${API_BASE}/chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                body: JSON.stringify(payload),
+                signal: abortController.signal 
+            });
+
+            if (res.status === 429) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                // 重试请求也要加 signal
+                res = await fetch(`${API_BASE}/chat/completions`, { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, 
+                    body: JSON.stringify(payload),
+                    signal: abortController.signal 
+                });
+            }
+            if (!res.ok) throw new Error(`服务请求失败: ${res.status}`);
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            if(loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+            
+            state.messages.push({ role: "assistant", content: "" });
+            renderChatHistory();
+            
+            const bubbles = container.querySelectorAll('.markdown-body');
+            const lastBubble = bubbles[bubbles.length - 1];
+            let fullResponse = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const lines = decoder.decode(value, { stream: true }).split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                        try {
+                            const content = JSON.parse(line.substring(6)).choices[0]?.delta?.content || "";
+                            fullResponse += content;
+                            lastBubble.innerHTML = marked.parse(fullResponse);
+                            container.scrollTop = container.scrollHeight;
+                        } catch (e) {}
+                    }
+                }
+            }
+            state.messages[state.messages.length - 1].content = fullResponse;
+            await saveMessageToBackend("assistant", fullResponse);
+            if (state.messages.length === 2 && state.chatHistoryId) generateSmartTitle(state.chatHistoryId, state.messages);
+
+        } catch (error) {
+            // 【错误处理】如果是手动中断 (AbortError)，则忽略报错
+            if (error.name === 'AbortError') {
+                console.log("用户手动停止生成");
+                // 可以在这里把当前已经生成的部分保存到后端 (可选)
+                if(state.messages[state.messages.length-1].content) {
+                   await saveMessageToBackend("assistant", state.messages[state.messages.length-1].content);
+                }
+            } else {
+                console.error(error);
+                if(loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+                state.messages.push({ role: "assistant", content: "❌ 出错: " + error.message });
+                renderChatHistory();
+            }
+        } finally {
+            // 【收尾】不管成功、失败还是停止，都恢复 UI
+            if (loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+            isChatProcessing = false;
+            abortController = null;
+            updateInputUI(false); // 恢复发送按钮和输入框
+        }
+    }
+
+    // === 认证 ===
+    function checkLoginState() {
+        const modal = document.getElementById('auth-modal');
+        if (authToken) {
+            modal.classList.add('hidden');
+            // document.getElementById('user-info-display').classList.remove('hidden'); // ❌ 这一行删掉，因为侧边栏用户信息区没了
+            try {
+                const u = JSON.parse(localStorage.getItem('wapi_user'));
+                if(u) {
+                    // ✅ 修改为：更新顶部 Header 的用户名
+                    const headerNameEl = document.getElementById('header-username');
+                    if(headerNameEl) headerNameEl.innerText = u.username;
+                }
+                loadChatList();
+            } catch(e){}
+        } else {
+            modal.classList.remove('hidden');
+            // document.getElementById('user-info-display').classList.add('hidden'); // ❌ 这一行删掉
+        }
+    }
+
+    // 切换登录/注册模式
+    let isRegisterMode = false;
+    function toggleAuthMode() {
+        const regCodeInput = document.getElementById('auth-registration-code');
+        const loginBtn = document.getElementById('btn-login');
+        const registerBtn = document.getElementById('btn-register');
+        
+        isRegisterMode = !isRegisterMode;
+        
+        if (isRegisterMode) {
+            regCodeInput.classList.remove('hidden');
+            loginBtn.classList.add('hidden');
+            registerBtn.classList.remove('hidden');
+            registerBtn.textContent = '确认注册';
+        } else {
+            regCodeInput.classList.add('hidden');
+            loginBtn.classList.remove('hidden');
+            registerBtn.classList.remove('hidden');
+            registerBtn.textContent = '注册新账号';
+        }
+    }
+
+    // 绑定登录和注册按钮事件（在页面加载时执行）
+    function bindAuthButtons() {
+        // 登录按钮点击事件
+        const loginBtn = document.getElementById('btn-login');
+        if (loginBtn) {
+            loginBtn.addEventListener('click', function() {
+                handleAuth('login');
+            });
+        }
+
+        // 注册按钮点击事件
+        const registerBtn = document.getElementById('btn-register');
+        if (registerBtn) {
+            registerBtn.addEventListener('click', function(e) {
+                if (!isRegisterMode) {
+                    e.preventDefault();
+                    toggleAuthMode();
+                } else {
+                    handleAuth('register');
+                }
+            });
+        }
+    }
+
+    async function handleAuth(type) {
+        const u = document.getElementById('auth-username').value.trim();
+        const p = document.getElementById('auth-password').value.trim();
+        const regCode = document.getElementById('auth-registration-code').value.trim();
+        const errBox = document.getElementById('auth-error');
+        
+        if (!u || !p) return errBox.innerText = "请输入账号密码", errBox.classList.remove('hidden');
+        if (type === 'register' && !regCode) return errBox.innerText = "请输入注册码", errBox.classList.remove('hidden');
+
+        try {
+            const body = { username: u, password: p };
+            if (type === 'register') {
+                body.registrationCode = regCode;
+            }
+            
+            const res = await fetch(`${BACKEND_URL}/auth/${type}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.message);
+
+            if (type === 'register') {
+                alert("注册成功");
+                // 切换回登录模式
+                toggleAuthMode();
+                // 清空注册码输入框
+                document.getElementById('auth-registration-code').value = '';
+            } else {
+                authToken = data.token;
+                localStorage.setItem('wapi_token', authToken);
+                localStorage.setItem('wapi_user', JSON.stringify(data.user));
+                checkLoginState();
+            }
+            errBox.classList.add('hidden');
+        } catch (e) {
+            errBox.innerText = e.message;
+            errBox.classList.remove('hidden');
+        }
+    }
+
+    // === 模型选择器逻辑 (整合版) ===
+    function toggleModelMenu(e) {
+        if(e) e.stopPropagation();
+        const menu = document.getElementById('model-dropdown');
+        if (menu.classList.contains('invisible')) {
+            renderModelListInInput(); 
+            menu.classList.remove('invisible', 'opacity-0', 'translate-y-2');
+        } else {
+            menu.classList.add('invisible', 'opacity-0', 'translate-y-2');
+        }
+    }
+
+    // 点击外部关闭菜单
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('model-dropdown');
+        if (menu && !menu.contains(e.target) && !e.target.closest('[onclick*="toggleModelMenu"]')) {
+            menu.classList.add('invisible', 'opacity-0', 'translate-y-2');
+        }
+    });
+
+    function renderModelListInInput() {
+        const container = document.getElementById('model-list-container');
+        const currentKey = state.workflow === 'text' ? state.textModelKey : state.imageModelKey;
+
+        // 生成分组列表：先显示文本模型，再显示视觉模型
+        let html = '';
+        
+        // 1. 文本模型组 - 浅黄色底色
+        html += `<div class="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-yellow-50 border-y border-yellow-100">智能对话模型</div>`;
+        Object.keys(TEXT_MODELS_MAP).forEach(key => {
+            const isSelected = state.workflow==='text' && key === currentKey;
+             html += `
+                <div onclick="selectModelFromInput('text', '${key}')" class="mx-2 my-1 px-3 py-2 cursor-pointer flex items-center justify-between group transition-all ${isSelected ? 'bg-blue-500 text-white rounded-lg' : 'hover:bg-yellow-100 rounded-lg'}">
+                    <span class="text-xs font-medium ${isSelected ? 'text-white font-bold' : 'text-gray-700'}">${key}</span>
+                    ${isSelected ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>' : ''}
+                </div>`;
+        });
+
+        // 2. 视觉模型组 - 浅蓝色底色
+        html += `<div class="px-3 py-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider bg-blue-50 border-y border-blue-100 mt-1">视觉生成模型</div>`;
+        Object.keys(IMAGE_MODELS_MAP).forEach(key => {
+            const isSelected = state.workflow==='image' && key === currentKey;
+             html += `
+                <div onclick="selectModelFromInput('image', '${key}')" class="mx-2 my-1 px-3 py-2 cursor-pointer flex items-center justify-between group transition-all ${isSelected ? 'bg-blue-500 text-white rounded-lg' : 'hover:bg-blue-100 rounded-lg'}">
+                    <span class="text-xs font-medium ${isSelected ? 'text-white font-bold' : 'text-gray-700'}">${key}</span>
+                    ${isSelected ? '<svg class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>' : ''}
+                </div>`;
+        });
+
+        container.innerHTML = html;
+    }
+
+    function selectModelFromInput(type, key) {
+        const oldWorkflow = state.workflow;
+        const oldTextModelKey = state.textModelKey;
+        const oldImageModelKey = state.imageModelKey;
+        
+        // 如果从视觉模型切换到文本模型，需要确认
+        if (oldWorkflow === 'image' && type === 'text') {
+            if (!confirm("切换语言模型后会进入新对话，确认切换吗？")) {
+                // 用户取消，恢复原来的状态
+                return;
+            }
+            // 用户确认，新建对话
+            startNewChat(true);
+        }
+        // 如果切换到视觉模型，新建对话
+        else if (type === 'image' && oldWorkflow === 'text') {
+            startNewChat(true);
+        }
+        
+        // 更新状态
+        state.workflow = type;
+        if (type === 'text') state.textModelKey = key;
+        else state.imageModelKey = key;
+        
+        // 更新 UI
+        const nameEl = document.getElementById('current-model-name');
+        if(nameEl) nameEl.innerText = type === 'text' ? key : state.imageModelKey;
+        
+        // 更新工作流视图
+        updateWorkflowUI();
+        
+        // 关闭菜单
+        const menu = document.getElementById('model-dropdown');
+        if(menu) menu.classList.add('invisible', 'opacity-0', 'translate-y-2');
+    }
+
+    function logout() {
+        if (!confirm("确定要退出登录吗？")) return; // 增加确认拦截
+        
+        localStorage.removeItem('wapi_token');
+        localStorage.removeItem('wapi_user');
+        location.reload();
+    }
+
+    function autoResizeTextarea(el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight) + 'px'; }
+    
+    // 修改：Sidebar 选中的高亮颜色
+    function renderSidebar() {
+        document.getElementById('text-model-list').innerHTML = Object.keys(TEXT_MODELS_MAP).map(key => `<div class="px-2 py-1 text-sm text-gray-500 cursor-pointer hover:text-gray-900 transition-colors ${state.textModelKey===key?'text-yellow-600 font-bold bg-yellow-50 rounded':''}" onclick="switchModel('text', '${key}')">${key}</div>`).join('');
+        document.getElementById('image-model-list').innerHTML = Object.keys(IMAGE_MODELS_MAP).map(key => `<div class="px-2 py-1 text-sm text-gray-500 cursor-pointer hover:text-gray-900 transition-colors ${state.imageModelKey===key?'text-blue-600 font-bold bg-blue-50 rounded':''}" onclick="switchModel('image', '${key}')">${key}</div>`).join('');
+    }
+    function renderRatioOptions() {
+        const aspectSelect = document.getElementById('aspect-ratio-select');
+        const resSelect = document.getElementById('resolution-select');
+        if (!aspectSelect || !resSelect) return;
+        
+        aspectSelect.innerHTML = Object.keys(ASPECT_RATIOS).map(k => `<option value="${k}">${k}</option>`).join('');
+        aspectSelect.onchange = () => { 
+            resSelect.innerHTML = ASPECT_RATIOS[aspectSelect.value].map(r => `<option value="${r}">${r}</option>`).join(''); 
+        };
+        aspectSelect.onchange(); // 初始化分辨率选项
+    }
+
+    // === 新增：删除对话功能 ===
+    async function deleteChat(event, chatId) {
+        event.stopPropagation(); // 重要：阻止点击事件冒泡，防止误触打开对话
+        
+        if (!confirm("确定要删除这条对话记录吗？删除后无法恢复。")) return;
+
+        try {
+            const res = await fetch(`${BACKEND_URL}/chat/${chatId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+            
+            if (res.ok) {
+                // 如果删除的是当前正在看的对话，则清空当前视图
+                if (state.chatHistoryId === chatId) {
+                    startNewChat(true); 
+                }
+                // 刷新列表
+                loadChatList();
+            } else {
+                alert("删除失败，请稍后重试");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("网络错误");
+        }
+    }
+
+
+    document.getElementById('send-btn').onclick = sendTextMessage;
+    document.getElementById('chat-input').onkeydown = (e) => { 
+        // 修改：Enter 默认为换行，只有 Ctrl + Enter (或 Command + Enter) 才发送
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault(); 
+            sendTextMessage(); 
+        }
+    };
+
+    // === 画廊逻辑 (亮色适配) ===
+    let currentGalleryImages = [];
+    async function openImageGallery() {
+        const modal = document.getElementById('gallery-modal');
+        const grid = document.getElementById('gallery-grid');
+        const emptyState = document.getElementById('gallery-empty');
+        
+        modal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden'; 
+        grid.innerHTML = '<div class="col-span-full text-center py-10 text-gray-400 flex flex-col items-center gap-3"><svg class="animate-spin h-6 w-6 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>正在加载云端资产...</span></div>';
+        emptyState.classList.add('hidden');
+
+        try {
+            const res = await fetch(`${API_BASE}/images/history`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+            if (!res.ok) throw new Error("加载失败");
+            const images = await res.json();
+            currentGalleryImages = images;
+
+            grid.innerHTML = ''; 
+            if (images.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            }
+
+            // 修改：画廊卡片背景改为白色，增加阴影
+            images.forEach((img, index) => {
+                const card = document.createElement('div');
+                card.className = "group relative w-full aspect-square bg-white shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-all";
+                card.onclick = () => showDetailModal(index);
+                card.innerHTML = `
+                    <img src="${img.imageUrl}" class="absolute inset-0 w-full h-full object-cover object-center transition-transform duration-500 group-hover:scale-105" loading="lazy" alt="Generated Art" onerror="this.style.display='none'; this.nextElementSibling.classList.remove('hidden');">
+                    <div class="expired-layer hidden absolute inset-0 flex flex-col items-center justify-center bg-gray-100 p-2 text-center select-none">
+                         <svg class="w-8 h-8 text-gray-400 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                         <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">已过期</span>
+                    </div>
+                    <div class="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                         <svg class="w-6 h-6 text-white drop-shadow-md" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        } catch (e) { console.error(e); grid.innerHTML = `<div class="col-span-full text-center py-10 text-red-500">加载失败: ${e.message}</div>`; }
+    }
+
+    function showDetailModal(index) {
+        const imgData = currentGalleryImages[index];
+        if (!imgData) return;
+        const modal = document.getElementById('detail-modal');
+        const imgEl = document.getElementById('detail-img');
+        imgEl.src = imgData.imageUrl;
+        document.getElementById('detail-date').innerText = new Date(imgData.createdAt).toLocaleString();
+        document.getElementById('detail-prompt').innerText = imgData.prompt;
+        document.getElementById('detail-res').innerText = imgData.resolution || 'Unknown';
+        document.getElementById('detail-model').innerText = imgData.model || 'Unknown';
+        document.getElementById('detail-model').title = imgData.model || '';
+        document.getElementById('detail-style').innerText = imgData.style || 'None';
+        document.getElementById('detail-download').href = imgData.imageUrl;
+        modal.classList.remove('hidden');
+        setTimeout(() => { modal.classList.remove('opacity-0'); }, 10);
+    }
+
+    function closeDetailModal() {
+        const modal = document.getElementById('detail-modal');
+        modal.classList.add('opacity-0');
+        setTimeout(() => { modal.classList.add('hidden'); }, 300);
+    }
+
+    function copyPrompt() {
+        navigator.clipboard.writeText(document.getElementById('detail-prompt').innerText).then(() => { alert("提示词已复制！"); });
+    }
+
+    init();
+    bindAuthButtons();
+
+    window.addEventListener('load', () => {
+        gsap.from("aside", { x: -50, opacity: 0, duration: 1, ease: "power3.out", delay: 0.2 });
+        gsap.from("header", { y: -20, opacity: 0, duration: 0.8, ease: "power3.out", delay: 0.4 });
+        gsap.from("main", { opacity: 0, duration: 1, delay: 0.5 });
+    });
+</script>
+</body>
+</html>
