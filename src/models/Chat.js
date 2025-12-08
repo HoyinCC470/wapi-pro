@@ -19,4 +19,9 @@ ChatSchema.pre('save', function() {
     this.updatedAt = Date.now();
 });
 
+// 添加索引优化查询性能
+ChatSchema.index({ userId: 1, updatedAt: -1 });
+ChatSchema.index({ userId: 1, createdAt: -1 });
+ChatSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('Chat', ChatSchema);

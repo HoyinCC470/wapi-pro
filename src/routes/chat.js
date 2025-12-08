@@ -2,143 +2,166 @@ const express = require('express');
 const router = express.Router();
 const Chat = require('../models/Chat');
 const authMiddleware = require('../middleware/authMiddleware');
+const {
+    AuthenticationError,
+    NotFoundError,
+    ValidationError
+} = require('../utils/errors');
+const { sendSuccess } = require('../utils/response');
 
 router.use(authMiddleware);
 
-// === 辅助函数：兼容不同的 User ID 写法 ===
 function getUserId(req) {
-    if (!req.user) return null;
-    // 尝试获取 ID，兼容 id, userId, _id 三种常见写法
+    if (!req.user) {
+        return null;
+    }
     return req.user.id || req.user.userId || req.user._id;
 }
 
 // 1. 获取列表
-router.get('/list', async (req, res) => {
+router.get('/list', async (req, res, next) => {
     try {
         const userId = getUserId(req);
         if (!userId) {
-            console.error("❌ 错误: req.user 中找不到 ID. req.user 内容:", req.user);
-            return res.status(401).json({ message: '无法获取用户ID' });
+            return next(new AuthenticationError('无法获取用户ID'));
         }
 
-        const chats = await Chat.find({ userId: userId })
-            .select('_id title updatedAt') 
+        const chats = await Chat.find({ userId })
+            .select('_id title updatedAt')
             .sort({ updatedAt: -1 });
-        res.json(chats);
+        return sendSuccess(res, { message: '获取成功', data: chats });
     } catch (err) {
-        console.error("获取列表失败:", err);
-        res.status(500).json({ message: '服务器错误' });
+        next(err);
     }
 });
 
 // 2. 新建会话
-router.post('/new', async (req, res) => {
+router.post('/new', async (req, res, next) => {
     try {
         const userId = getUserId(req);
-        // === 调试日志 ===
-        console.log("正在创建会话，当前用户:", req.user);
-        console.log("解析出的 UserID:", userId);
-        // ================
-
         if (!userId) {
-            return res.status(401).json({ message: '用户ID无效' });
+            return next(new AuthenticationError('用户ID无效'));
         }
 
         const { firstMessage } = req.body;
-        let title = "新对话";
+        let title = '新对话';
         if (firstMessage) {
-            title = firstMessage.length > 20 ? firstMessage.substring(0, 20) + "..." : firstMessage;
+            title = firstMessage.length > 20 ? `${firstMessage.substring(0, 20)}...` : firstMessage;
         }
 
         const newChat = new Chat({
-            userId: userId, // 使用兼容后的 ID
-            title: title,
+            userId,
+            title,
             messages: firstMessage ? [{ role: 'user', content: firstMessage }] : []
         });
 
         const savedChat = await newChat.save();
-        console.log("✅ 会话创建成功:", savedChat._id);
-        res.json(savedChat);
+        return sendSuccess(res, { message: '创建成功', data: savedChat });
     } catch (err) {
-        console.error("❌ 新建会话失败:", err); // 这里会打印具体的 mongoose 错误
-        res.status(500).json({ message: '创建失败: ' + err.message });
+        next(err);
     }
 });
 
 // 3. 获取详情
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req, res, next) => {
     try {
         const userId = getUserId(req);
-        const chat = await Chat.findOne({ 
-            _id: req.params.id, 
-            userId: userId 
+        if (!userId) {
+            return next(new AuthenticationError('无法获取用户ID'));
+        }
+
+        const chat = await Chat.findOne({
+            _id: req.params.id,
+            userId
         });
 
-        if (!chat) return res.status(404).json({ message: '会话不存在' });
-        res.json(chat);
+        if (!chat) {
+            return next(new NotFoundError('会话'));
+        }
+        return sendSuccess(res, { message: '保存成功', data: chat });
     } catch (err) {
-        console.error("获取详情失败:", err);
-        res.status(500).json({ message: '服务器错误' });
+        next(err);
     }
 });
 
 // 4. 追加消息
-router.post('/:id/message', async (req, res) => {
+router.post('/:id/message', async (req, res, next) => {
     try {
         const userId = getUserId(req);
+        if (!userId) {
+            return next(new AuthenticationError('无法获取用户ID'));
+        }
+
         const { role, content } = req.body;
-        
+        if (!role || !content) {
+            return next(new ValidationError('消息角色和内容不能为空'));
+        }
+
         const chat = await Chat.findOneAndUpdate(
-            { _id: req.params.id, userId: userId },
-            { 
+            { _id: req.params.id, userId },
+            {
                 $push: { messages: { role, content } },
                 $set: { updatedAt: Date.now() }
             },
             { new: true }
         );
 
-        if (!chat) return res.status(404).json({ message: '会话不存在' });
-        res.json(chat);
+        if (!chat) {
+            return next(new NotFoundError('会话'));
+        }
+        return sendSuccess(res, { message: '保存成功', data: chat });
     } catch (err) {
-        console.error("保存消息失败:", err);
-        res.status(500).json({ message: '保存失败' });
+        next(err);
     }
 });
 
-// 5. 修改标题 (PUT)
-router.put('/:id', async (req, res) => {
+// 5. 修改标题
+router.put('/:id', async (req, res, next) => {
     try {
         const userId = getUserId(req);
+        if (!userId) {
+            return next(new AuthenticationError('无法获取用户ID'));
+        }
+
         const { title } = req.body;
+        if (!title || !title.trim()) {
+            return next(new ValidationError('标题不能为空'));
+        }
 
         const updatedChat = await Chat.findOneAndUpdate(
-            { _id: req.params.id, userId: userId },
-            { title: title },
+            { _id: req.params.id, userId },
+            { title: title.trim() },
             { new: true }
         );
 
-        if (!updatedChat) return res.status(404).json({ message: '会话不存在' });
-        res.json(updatedChat);
+        if (!updatedChat) {
+            return next(new NotFoundError('会话'));
+        }
+        return sendSuccess(res, { message: '更新成功', data: updatedChat });
     } catch (err) {
-        console.error("修改标题失败:", err);
-        res.status(500).json({ message: '服务器错误' });
+        next(err);
     }
 });
 
 // 6. 删除会话
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req, res, next) => {
     try {
         const userId = getUserId(req);
-        const deletedChat = await Chat.findOneAndDelete({ 
-            _id: req.params.id, 
-            userId: userId 
+        if (!userId) {
+            return next(new AuthenticationError('无法获取用户ID'));
+        }
+
+        const deletedChat = await Chat.findOneAndDelete({
+            _id: req.params.id,
+            userId
         });
 
-        if (!deletedChat) return res.status(404).json({ message: '会话不存在' });
-        res.json({ message: '删除成功' });
+        if (!deletedChat) {
+            return next(new NotFoundError('会话'));
+        }
+        return sendSuccess(res, { message: '删除成功' });
     } catch (err) {
-        console.error("删除会话失败:", err);
-        res.status(500).json({ message: '服务器错误' });
+        next(err);
     }
 });
 

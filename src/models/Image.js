@@ -26,4 +26,10 @@ const imageSchema = new mongoose.Schema({
     }
 });
 
+// 添加索引优化查询性能
+imageSchema.index({ userId: 1, createdAt: -1 });
+imageSchema.index({ userId: 1, model: 1, createdAt: -1 });
+imageSchema.index({ style: 1, createdAt: -1 });
+imageSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('Image', imageSchema);

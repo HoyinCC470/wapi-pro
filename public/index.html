@@ -192,6 +192,7 @@
                 <div id="auth-error" class="hidden text-red-500 text-xs text-center bg-red-50 py-2 rounded border border-red-100"></div>
                 <button id="btn-login" class="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-lg transition-all shadow-lg shadow-gray-900/20">立即登录</button>
                 <button id="btn-register" class="w-full py-3 bg-transparent border border-gray-200 hover:border-gray-400 text-gray-500 hover:text-gray-700 font-medium rounded-lg transition-all">注册新账号</button>
+                <button id="btn-back-login" class="hidden w-full py-2 text-sm text-gray-400 hover:text-gray-600 font-medium transition-all">返回登录</button>
             </div>
         </div>
     </div>
@@ -282,6 +283,10 @@
                         <div class="flex justify-between items-center px-3 pb-3 pt-1 border-t border-gray-50/50">
                             
                             <div class="flex items-center gap-2">
+                                <input type="file" id="file-upload" accept=".doc,.docx,.txt,.pdf" class="hidden" onchange="handleFileUpload(this)">
+                                <button onclick="document.getElementById('file-upload').click()" class="p-2 hover:bg-gray-100 rounded-lg transition-colors group" title="上传文档">
+                                    <svg class="w-5 h-5 text-gray-500 group-hover:text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                                </button>
                                 <div class="relative">
                                     <button onclick="toggleModelMenu(event)" class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 text-xs font-bold text-gray-600 transition-colors group/btn" title="切换模型">
                                         <div class="w-5 h-5 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] shadow-sm">M</div>
@@ -480,7 +485,10 @@
     let authToken = localStorage.getItem('wapi_token');
     
     // === 新增：用于中断请求的控制器 ===
-    let abortController = null; 
+    let abortController = null;
+    let processingWorkflow = null;
+    let imageGenerationContext = null;
+    let textGenerationContext = null;
 
     // === 切换 发送/停止 按钮样式 (修复悬停颜色) ===
     function updateInputUI(isGenerating) {
@@ -521,6 +529,85 @@
             input.classList.remove('bg-gray-50');
             input.focus();
         }
+    }
+
+    function determineWorkflowFromMessages(messages = []) {
+        if (!Array.isArray(messages) || messages.length === 0) return 'text';
+        const lastAssistantMessage = [...messages].reverse().find(msg => msg.role === 'assistant');
+        if (!lastAssistantMessage) return 'text';
+        const content = (lastAssistantMessage.content || '').trim();
+        if (!content) return 'text';
+        const normalized = content.split('?')[0] || '';
+        const isUrl = /^https?:\/\//i.test(content);
+        const hasImageExt = /\.(png|jpe?g|gif|webp|bmp)$/i.test(normalized);
+        return (isUrl || hasImageExt) ? 'image' : 'text';
+    }
+
+    function detachProcessingForChatSwitch(nextChatId) {
+        if (!isChatProcessing) return;
+        const isImageJob = processingWorkflow === 'image';
+        const isTextJob = processingWorkflow === 'text';
+        if (isImageJob && imageGenerationContext) {
+            if (imageGenerationContext.chatId === nextChatId) {
+                return;
+            }
+            imageGenerationContext.isBackground = true;
+            isChatProcessing = false;
+            processingWorkflow = null;
+            abortController = null;
+            updateInputUI(false);
+            return;
+        }
+        if (isTextJob && textGenerationContext) {
+            if (textGenerationContext.chatId === nextChatId) {
+                return;
+            }
+            textGenerationContext.isBackground = true;
+            isChatProcessing = false;
+            processingWorkflow = null;
+            abortController = null;
+            updateInputUI(false);
+            return;
+        }
+        if (abortController) {
+            abortController.abort();
+            abortController = null;
+        }
+        isChatProcessing = false;
+        processingWorkflow = null;
+        updateInputUI(false);
+        if (isImageJob) {
+            imageGenerationContext = null;
+        }
+        if (isTextJob) {
+            textGenerationContext = null;
+        }
+    }
+
+    function restoreImageJobIfNeeded(chatId) {
+        if (!imageGenerationContext || imageGenerationContext.chatId !== chatId || !imageGenerationContext.isBackground) {
+            return;
+        }
+        isChatProcessing = true;
+        processingWorkflow = 'image';
+        abortController = imageGenerationContext.controller;
+        imageGenerationContext.isBackground = false;
+        updateInputUI(true);
+    }
+
+    function restoreTextJobIfNeeded(chatId) {
+        if (!textGenerationContext || textGenerationContext.chatId !== chatId || !textGenerationContext.isBackground) {
+            return;
+        }
+        if (isChatProcessing && processingWorkflow !== 'text') {
+            return;
+        }
+        isChatProcessing = true;
+        processingWorkflow = 'text';
+        abortController = textGenerationContext.controller;
+        textGenerationContext.isBackground = false;
+        updateInputUI(true);
+        renderChatHistory();
     }
     
     const TEXT_MODELS_MAP = { 
@@ -671,7 +758,8 @@
                 headers: { 'Authorization': `Bearer ${authToken}` }
             });
             if (res.status === 401) { logout(); return; } 
-            const chats = await res.json();
+            const result = await res.json();
+            const chats = result.data || [];
             
             const listEl = document.getElementById('chat-history-list');
             
@@ -700,6 +788,8 @@
     }
 
     async function loadChatDetail(chatId) {
+        detachProcessingForChatSwitch(chatId);
+        
         state.chatHistoryId = chatId;
         const items = document.querySelectorAll('#chat-history-list > div');
         items.forEach(el => {
@@ -714,24 +804,28 @@
             const res = await fetch(`${BACKEND_URL}/chat/${chatId}`, {
                 headers: { 'Authorization': `Bearer ${authToken}` }
             });
-            const chat = await res.json();
-            state.messages = chat.messages || [];
+            const result = await res.json();
+            const chat = result.data || {};
+            const incomingMessages = chat.messages || [];
+            const hasPendingTextJob = textGenerationContext && textGenerationContext.chatId === chatId && textGenerationContext.messagesRef;
+            state.messages = hasPendingTextJob ? textGenerationContext.messagesRef : incomingMessages;
             
-            // 检测是否是图像对话（如果第一条助手消息是URL，则认为是图像对话）
-            if (state.messages.length > 0) {
-                const firstAssistantMsg = state.messages.find(m => m.role === 'assistant');
-                if (firstAssistantMsg && (firstAssistantMsg.content.startsWith('http://') || firstAssistantMsg.content.startsWith('https://'))) {
-                    // 自动切换到图像工作流
-                    state.workflow = 'image';
-                    updateWorkflowUI();
-                }
+            const hasPendingImageJob = imageGenerationContext && imageGenerationContext.chatId === chatId;
+            const detectedWorkflow = hasPendingImageJob ? 'image' : determineWorkflowFromMessages(state.messages);
+            if (state.workflow !== detectedWorkflow) {
+                state.workflow = detectedWorkflow;
             }
+            updateWorkflowUI();
             
             renderChatHistory();
+            restoreImageJobIfNeeded(chatId);
+            restoreTextJobIfNeeded(chatId);
         } catch (err) { console.error(err); }
     }
 
     function startNewChat(clearUI = true) {
+        detachProcessingForChatSwitch(null);
+        
         state.chatHistoryId = null;
         state.messages = [];
         if (clearUI) {
@@ -741,9 +835,10 @@
         }
     }
 
-    async function saveMessageToBackend(role, content) {
-        if (!authToken) return;
-        if (!state.chatHistoryId) {
+    async function saveMessageToBackend(role, content, targetChatId = null) {
+        if (!authToken) return null;
+        let chatId = targetChatId || state.chatHistoryId;
+        if (!chatId) {
             try {
                 const res = await fetch(`${BACKEND_URL}/chat/new`, {
                     method: 'POST',
@@ -751,23 +846,27 @@
                     body: JSON.stringify({ firstMessage: content })
                 });
                 if (!res.ok) throw new Error("创建会话失败");
-                const newChat = await res.json();
-                state.chatHistoryId = newChat._id; 
+                const result = await res.json();
+                const newChat = result.data || {};
+                chatId = newChat._id;
+                if (!targetChatId) {
+                    state.chatHistoryId = newChat._id; 
+                }
                 await loadChatList(); 
-                return; 
             } catch (e) {
                 console.error("创建会话报错:", e);
-                return;
+                return null;
             }
         }
         try {
-            await fetch(`${BACKEND_URL}/chat/${state.chatHistoryId}/message`, {
+            await fetch(`${BACKEND_URL}/chat/${chatId}/message`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
                 body: JSON.stringify({ role, content })
             });
             if (role === 'user') loadChatList(); 
         } catch (e) { console.error("保存消息报错:", e); }
+        return chatId;
     }
 
     async function generateSmartTitle(chatId, conversation) {
@@ -832,7 +931,16 @@
             abortController.abort(); // 1. 中断网络请求
             abortController = null;
         }
+        const wasImageJob = processingWorkflow === 'image';
+        const wasTextJob = processingWorkflow === 'text';
         isChatProcessing = false;
+        processingWorkflow = null;
+        if (wasImageJob) {
+            imageGenerationContext = null;
+        }
+        if (wasTextJob) {
+            textGenerationContext = null;
+        }
         
         // 2. 界面恢复
         updateInputUI(false);
@@ -891,10 +999,20 @@
             let contentHtml = '';
             if (isImageUrl) {
                 // 图像消息 - 进一步压缩图像显示尺寸，限制最大高度为300px
+                const imageUrlAttr = (msg.content || '').replace(/"/g, '&quot;');
                 contentHtml = `
-                    <div class="w-full">
-                        <img src="${msg.content}" alt="生成的图像" class="w-full max-w-full h-auto rounded-lg shadow-md mb-2" style="max-width: 100%; max-height: 300px; width: auto; height: auto; object-fit: contain;" onerror="this.parentElement.innerHTML='<p class=\\'text-red-500 text-sm\\'>图像加载失败</p>'">
-                        <a href="${msg.content}" target="_blank" class="text-xs text-blue-600 hover:text-blue-500">打开原图</a>
+                    <div class="w-full space-y-3">
+                        <img src="${msg.content}" alt="生成的图像" class="w-full max-w-full h-auto rounded-lg shadow-md" style="max-width: 100%; max-height: 300px; width: auto; height: auto; object-fit: contain;" onerror="this.parentElement.innerHTML='<p class=\\'text-red-500 text-sm\\'>图像加载失败</p>'">
+                        <div class="flex flex-wrap gap-2 justify-center">
+                            <button type="button" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white/80 text-xs font-bold text-gray-700 shadow-sm hover:bg-blue-600 hover:text-white hover:border-blue-500 hover:shadow-lg transition-all group" data-url="${imageUrlAttr}" onclick="downloadImageFromChat(this)">
+                                <svg class="w-4 h-4 text-gray-500 transition-colors group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                下载原图
+                            </button>
+                            <button type="button" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white/80 text-xs font-bold text-gray-700 shadow-sm hover:bg-blue-600 hover:text-white hover:border-blue-500 hover:shadow-lg transition-all group" data-url="${imageUrlAttr}" onclick="openImageDetailFromChat(this)">
+                                <svg class="w-4 h-4 text-gray-500 transition-colors group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                                打开详情页
+                            </button>
+                        </div>
                     </div>
                 `;
             } else {
@@ -921,21 +1039,54 @@
             return;
         }
 
+        if (state.workflow === 'image' && imageGenerationContext && imageGenerationContext.chatId && imageGenerationContext.chatId !== state.chatHistoryId) {
+            alert("当前仍有其他图片生成任务进行中，请稍候完成后再开始新的生成。");
+            return;
+        }
+
+        if (state.workflow === 'text' && textGenerationContext && (textGenerationContext.chatId ? textGenerationContext.chatId !== state.chatHistoryId : true)) {
+            alert("当前仍有其他文本对话在生成中，请稍候完成后再开始新的生成。");
+            return;
+        }
+
         const input = document.getElementById('chat-input');
         const prompt = input.value.trim();
         if (!prompt) return;
 
-        // 【准备工作】初始化控制器和 UI
         abortController = new AbortController(); // 创建新控制器
+        const activeController = abortController;
         isChatProcessing = true;
+        processingWorkflow = state.workflow;
         updateInputUI(true); // 切换为"停止"状态
+
+        if (processingWorkflow === 'image') {
+            imageGenerationContext = {
+                chatId: state.chatHistoryId,
+                controller: activeController,
+                isBackground: false
+            };
+        } else if (processingWorkflow === 'text') {
+            textGenerationContext = {
+                chatId: state.chatHistoryId,
+                controller: activeController,
+                isBackground: false,
+                messagesRef: state.messages
+            };
+        }
 
         state.messages.push({ role: "user", content: prompt });
         input.value = '';
         input.style.height = 'auto';
         renderChatHistory();
 
-        await saveMessageToBackend("user", prompt); 
+        const ensuredChatId = await saveMessageToBackend("user", prompt); 
+
+        if (processingWorkflow === 'image' && imageGenerationContext && !imageGenerationContext.chatId) {
+            imageGenerationContext.chatId = ensuredChatId || state.chatHistoryId;
+        }
+        if (processingWorkflow === 'text' && textGenerationContext && !textGenerationContext.chatId) {
+            textGenerationContext.chatId = ensuredChatId || state.chatHistoryId;
+        }
 
         const container = document.getElementById('chat-container');
         
@@ -964,23 +1115,27 @@
                         size: resolution,
                         style: "none" // 不再使用风格预设
                     }),
-                    signal: abortController.signal
+                    signal: activeController.signal
                 });
                 
                 if (!res.ok) throw new Error(await res.text());
-                const data = await res.json();
+                const result = await res.json();
+                const data = result.data || {};
                 
                 // 检查生成完成时是否还在同一个对话中
                 if (state.chatHistoryId !== generatingChatId) {
                     // 已经切换到其他对话，不更新当前UI，只保存到后端
                     console.log("图像生成完成，但已切换到其他对话，静默保存到原对话");
+                    
+                    // 显示通知提示用户图片已生成
+                    showNotification('图片生成完成', '图片已保存到原对话中，点击查看', () => {
+                        loadChatDetail(generatingChatId);
+                    });
+                    
                     // 直接保存消息到生成时的对话
                     try {
-                        await fetch(`${BACKEND_URL}/chat/${generatingChatId}/message`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-                            body: JSON.stringify({ role: "assistant", content: data.url })
-                        });
+                        await saveMessageToBackend("assistant", data.url, generatingChatId);
+                        await loadChatList();
                         
                         // 检查是否需要生成标题（需要先获取对话消息数量）
                         const chatRes = await fetch(`${BACKEND_URL}/chat/${generatingChatId}`, {
@@ -1002,10 +1157,10 @@
                     
                     state.messages.push({ role: "assistant", content: data.url });
                     renderChatHistory();
-                    await saveMessageToBackend("assistant", data.url);
+                    await saveMessageToBackend("assistant", data.url, generatingChatId);
                     
-                    if (state.messages.length === 2 && state.chatHistoryId) {
-                        generateSmartTitle(state.chatHistoryId, state.messages);
+                    if (state.messages.length === 2 && generatingChatId) {
+                        generateSmartTitle(generatingChatId, state.messages);
                     }
                 }
                 
@@ -1014,7 +1169,7 @@
                     console.log("用户手动停止生成");
                     // 只有在同一个对话中才保存停止状态
                     if (state.chatHistoryId === generatingChatId && state.messages[state.messages.length-1].content) {
-                       await saveMessageToBackend("assistant", state.messages[state.messages.length-1].content);
+                       await saveMessageToBackend("assistant", state.messages[state.messages.length-1].content, generatingChatId);
                     }
                 } else {
                     console.error(error);
@@ -1026,35 +1181,46 @@
                     }
                 }
             } finally {
-                // 只有在同一个对话中才移除loading和恢复UI
-                if (state.chatHistoryId === generatingChatId) {
-                    if (loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
-                    isChatProcessing = false;
-                    abortController = null;
-                    updateInputUI(false);
-                } else {
-                    // 已切换对话，只清理状态
-                    isChatProcessing = false;
+                // 无论在哪个对话，都要重置UI状态
+                isChatProcessing = false;
+                if (abortController === activeController) {
                     abortController = null;
                 }
+                if (imageGenerationContext && imageGenerationContext.chatId === generatingChatId) {
+                    imageGenerationContext = null;
+                }
+                processingWorkflow = null;
+                
+                // 只有在同一个对话中才移除loading
+                if (state.chatHistoryId === generatingChatId) {
+                    if (loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+                }
+                
+                // 重要：恢复UI状态（无论是否切换对话）
+                updateInputUI(false);
             }
             return;
         }
 
-            // 文本对话流程
-            const loadingDiv = document.createElement('div');
-            loadingDiv.className = "flex flex-row items-start gap-2"; // gap 改小一点
-            // 删除了 <div class="w-8 h-8 ...">AI</div>
-            loadingDiv.innerHTML = `<div class="flex-1 min-w-0 flex justify-start"><div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]"><span class="animate-pulse text-gray-500" id="loading-text">Thinking...</span></div></div>`;
-            container.appendChild(loadingDiv);
-            container.scrollTop = container.scrollHeight;
+        // 文本对话流程
+        const targetChatId = textGenerationContext?.chatId || state.chatHistoryId;
+        const targetMessages = state.messages;
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = "flex flex-row items-start gap-2";
+        loadingDiv.innerHTML = `<div class="flex-1 min-w-0 flex justify-start"><div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]"><span class="animate-pulse text-gray-500" id="loading-text">Thinking...</span></div></div>`;
+        container.appendChild(loadingDiv);
+        container.scrollTop = container.scrollHeight;
+
+        const shouldDisplayInCurrentChat = () => {
+            if (!targetChatId) return false;
+            const isBackground = textGenerationContext && textGenerationContext.chatId === targetChatId && textGenerationContext.isBackground;
+            return state.chatHistoryId === targetChatId && !isBackground;
+        };
+
+        let assistantMessage = null;
 
         try {
-            // 1. 准备上下文 (取最近 10 条)
-            const context = state.messages.map(m=>({role:m.role, content:m.content})).slice(-10);
-            
-            // 2. 【关键】植入未湃 WAPI 的系统人设 (System Prompt)
-            // 将 system message 放在数组最前面
+            const context = targetMessages.map(m=>({role:m.role, content:m.content})).slice(-10);
             const finalMessages = [
                 { role: "system", content: SYSTEM_PROMPT },
                 ...context
@@ -1062,27 +1228,25 @@
 
             const payload = { 
                 model: TEXT_MODELS_MAP[state.textModelKey], 
-                messages: finalMessages, // 使用带有 system prompt 的完整消息列表
+                messages: finalMessages,
                 stream: true, 
                 enable_thinking: false 
             };
             
-            // 【关键点】fetch 请求加入 signal: abortController.signal
             let res = await fetch(`${API_BASE}/chat/completions`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
                 body: JSON.stringify(payload),
-                signal: abortController.signal 
+                signal: activeController.signal 
             });
 
             if (res.status === 429) {
                 await new Promise(resolve => setTimeout(resolve, 3000));
-                // 重试请求也要加 signal
                 res = await fetch(`${API_BASE}/chat/completions`, { 
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, 
                     body: JSON.stringify(payload),
-                    signal: abortController.signal 
+                    signal: activeController.signal 
                 });
             }
             if (!res.ok) throw new Error(`服务请求失败: ${res.status}`);
@@ -1091,13 +1255,24 @@
             const decoder = new TextDecoder("utf-8");
             if(loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
             
-            state.messages.push({ role: "assistant", content: "" });
-            renderChatHistory();
-            
-            const bubbles = container.querySelectorAll('.markdown-body');
-            const lastBubble = bubbles[bubbles.length - 1];
-            let fullResponse = "";
+            assistantMessage = { role: "assistant", content: "" };
+            targetMessages.push(assistantMessage);
+            let lastBubble = null;
 
+            const ensureBubble = () => {
+                if (!shouldDisplayInCurrentChat()) {
+                    lastBubble = null;
+                    return;
+                }
+                if (!lastBubble || !lastBubble.isConnected) {
+                    renderChatHistory();
+                    const bubbles = container.querySelectorAll('.markdown-body');
+                    lastBubble = bubbles[bubbles.length - 1] || null;
+                }
+            };
+            ensureBubble();
+            
+            let fullResponse = "";
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -1107,36 +1282,68 @@
                         try {
                             const content = JSON.parse(line.substring(6)).choices[0]?.delta?.content || "";
                             fullResponse += content;
-                            lastBubble.innerHTML = marked.parse(fullResponse);
-                            container.scrollTop = container.scrollHeight;
+                            assistantMessage.content = fullResponse;
+                            if (shouldDisplayInCurrentChat()) {
+                                ensureBubble();
+                                if (lastBubble) {
+                                    lastBubble.innerHTML = marked.parse(fullResponse || " ");
+                                    container.scrollTop = container.scrollHeight;
+                                }
+                            }
                         } catch (e) {}
                     }
                 }
             }
-            state.messages[state.messages.length - 1].content = fullResponse;
-            await saveMessageToBackend("assistant", fullResponse);
-            if (state.messages.length === 2 && state.chatHistoryId) generateSmartTitle(state.chatHistoryId, state.messages);
+
+            if (assistantMessage && !assistantMessage.content) {
+                assistantMessage.content = fullResponse;
+            }
+            if (assistantMessage && assistantMessage.content) {
+                await saveMessageToBackend("assistant", assistantMessage.content, targetChatId);
+            }
+
+            const finishedInCurrentChat = shouldDisplayInCurrentChat();
+            if (!finishedInCurrentChat) {
+                await loadChatList();
+            }
+
+            if (finishedInCurrentChat && targetMessages.length === 2 && targetChatId) {
+                generateSmartTitle(targetChatId, targetMessages);
+            } else if (targetChatId && !finishedInCurrentChat) {
+                showNotification('文字生成完成', '文字结果已写回原对话，点击查看', () => {
+                    loadChatDetail(targetChatId);
+                });
+            }
 
         } catch (error) {
-            // 【错误处理】如果是手动中断 (AbortError)，则忽略报错
             if (error.name === 'AbortError') {
                 console.log("用户手动停止生成");
-                // 可以在这里把当前已经生成的部分保存到后端 (可选)
-                if(state.messages[state.messages.length-1].content) {
-                   await saveMessageToBackend("assistant", state.messages[state.messages.length-1].content);
+                if( assistantMessage && assistantMessage.content) {
+                   await saveMessageToBackend("assistant", assistantMessage.content, targetChatId);
                 }
             } else {
                 console.error(error);
                 if(loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
-                state.messages.push({ role: "assistant", content: "❌ 出错: " + error.message });
-                renderChatHistory();
+                if (shouldDisplayInCurrentChat()) {
+                    targetMessages.push({ role: "assistant", content: "❌ 出错: " + error.message });
+                    renderChatHistory();
+                } else if (targetChatId) {
+                    showNotification('文字生成失败', '原对话发生错误，点击可重新查看', () => {
+                        loadChatDetail(targetChatId);
+                    });
+                }
             }
         } finally {
-            // 【收尾】不管成功、失败还是停止，都恢复 UI
             if (loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
             isChatProcessing = false;
-            abortController = null;
-            updateInputUI(false); // 恢复发送按钮和输入框
+            if (abortController === activeController) {
+                abortController = null;
+            }
+            processingWorkflow = null;
+            if (textGenerationContext && textGenerationContext.controller === activeController) {
+                textGenerationContext = null;
+            }
+            updateInputUI(false);
         }
     }
 
@@ -1167,6 +1374,7 @@
         const regCodeInput = document.getElementById('auth-registration-code');
         const loginBtn = document.getElementById('btn-login');
         const registerBtn = document.getElementById('btn-register');
+        const backBtn = document.getElementById('btn-back-login');
         
         isRegisterMode = !isRegisterMode;
         
@@ -1175,11 +1383,13 @@
             loginBtn.classList.add('hidden');
             registerBtn.classList.remove('hidden');
             registerBtn.textContent = '确认注册';
+            if (backBtn) backBtn.classList.remove('hidden');
         } else {
             regCodeInput.classList.add('hidden');
             loginBtn.classList.remove('hidden');
             registerBtn.classList.remove('hidden');
             registerBtn.textContent = '注册新账号';
+            if (backBtn) backBtn.classList.add('hidden');
         }
     }
 
@@ -1205,6 +1415,16 @@
                 }
             });
         }
+
+        const backBtn = document.getElementById('btn-back-login');
+        if (backBtn) {
+            backBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (isRegisterMode) {
+                    toggleAuthMode();
+                }
+            });
+        }
     }
 
     async function handleAuth(type) {
@@ -1227,8 +1447,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.message);
+            const result = await res.json();
+            if (!res.ok || !result.success) throw new Error(result.message || '请求失败');
 
             if (type === 'register') {
                 alert("注册成功");
@@ -1237,9 +1457,10 @@
                 // 清空注册码输入框
                 document.getElementById('auth-registration-code').value = '';
             } else {
-                authToken = data.token;
+                // 使用新的响应格式
+                authToken = result.data.token;
                 localStorage.setItem('wapi_token', authToken);
-                localStorage.setItem('wapi_user', JSON.stringify(data.user));
+                localStorage.setItem('wapi_user', JSON.stringify(result.data.user));
                 checkLoginState();
             }
             errBox.classList.add('hidden');
@@ -1337,6 +1558,63 @@
         if(menu) menu.classList.add('invisible', 'opacity-0', 'translate-y-2');
     }
 
+    // === 通知系统 ===
+    function showNotification(title, message, onClick = null) {
+        // 创建通知容器（如果不存在）
+        let container = document.getElementById('notification-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'notification-container';
+            container.className = 'fixed top-4 right-4 z-50 flex flex-col gap-2';
+            document.body.appendChild(container);
+        }
+
+        // 创建通知元素
+        const notification = document.createElement('div');
+        notification.className = 'bg-white border border-blue-200 rounded-lg shadow-lg p-4 min-w-[300px] max-w-[400px] transform transition-all duration-300 translate-x-full opacity-0';
+        notification.innerHTML = `
+            <div class="flex items-start gap-3">
+                <div class="flex-shrink-0">
+                    <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-sm font-semibold text-gray-900">${title}</h3>
+                    <p class="text-sm text-gray-600 mt-1">${message}</p>
+                    ${onClick ? '<button class="mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium" onclick="this.closest(\'.notification-item\').clickHandler()">点击查看</button>' : ''}
+                </div>
+                <button class="flex-shrink-0 text-gray-400 hover:text-gray-600" onclick="this.closest('.notification-item').remove()">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+        `;
+        notification.className += ' notification-item';
+        
+        // 添加点击处理器
+        if (onClick) {
+            notification.clickHandler = () => {
+                onClick();
+                notification.remove();
+            };
+        }
+
+        container.appendChild(notification);
+
+        // 动画显示
+        setTimeout(() => {
+            notification.classList.remove('translate-x-full', 'opacity-0');
+        }, 10);
+
+        // 5秒后自动消失
+        setTimeout(() => {
+            notification.classList.add('translate-x-full', 'opacity-0');
+            setTimeout(() => notification.remove(), 300);
+        }, 5000);
+    }
+
     function logout() {
         if (!confirm("确定要退出登录吗？")) return; // 增加确认拦截
         
@@ -1417,7 +1695,8 @@
         try {
             const res = await fetch(`${API_BASE}/images/history`, { headers: { 'Authorization': `Bearer ${authToken}` } });
             if (!res.ok) throw new Error("加载失败");
-            const images = await res.json();
+            const result = await res.json();
+            const images = result.data || [];
             currentGalleryImages = images;
 
             grid.innerHTML = ''; 
@@ -1446,6 +1725,85 @@
         } catch (e) { console.error(e); grid.innerHTML = `<div class="col-span-full text-center py-10 text-red-500">加载失败: ${e.message}</div>`; }
     }
 
+    async function ensureGalleryImagesLoaded(forceReload = false) {
+        if (!forceReload && Array.isArray(currentGalleryImages) && currentGalleryImages.length > 0) {
+            return currentGalleryImages;
+        }
+        const res = await fetch(`${API_BASE}/images/history`, { headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) throw new Error('加载图片记录失败');
+        const result = await res.json();
+        currentGalleryImages = result.data || [];
+        return currentGalleryImages;
+    }
+
+    async function openImageDetailFromChat(buttonEl) {
+        const imageUrl = buttonEl?.dataset?.url;
+        if (!imageUrl) return;
+
+        try {
+            await ensureGalleryImagesLoaded(false);
+            let targetIndex = currentGalleryImages.findIndex(img => img.imageUrl === imageUrl);
+
+            if (targetIndex === -1) {
+                await ensureGalleryImagesLoaded(true);
+                targetIndex = currentGalleryImages.findIndex(img => img.imageUrl === imageUrl);
+            }
+
+            if (targetIndex === -1) {
+                alert("未能找到图片详情，图片可能已过期，请前往作品库查看。");
+                window.open(imageUrl, '_blank');
+                return;
+            }
+
+            showDetailModal(targetIndex);
+        } catch (error) {
+            console.error("打开详情页失败", error);
+            alert("加载图片详情失败，请稍后重试。");
+        }
+    }
+
+    async function downloadImageFromChat(buttonEl) {
+        const imageUrl = buttonEl?.dataset?.url;
+        if (!imageUrl) return;
+
+        const fallbackOpen = () => {
+            try {
+                window.open(imageUrl, '_blank');
+            } catch (e) {
+                console.error("无法打开新窗口", e);
+            }
+        };
+
+        try {
+            const response = await fetch(imageUrl);
+            if (!response.ok) throw new Error('下载失败');
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = deriveImageFileNameFromUrl(imageUrl);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+        } catch (error) {
+            console.error("下载原图失败", error);
+            fallbackOpen();
+        }
+    }
+
+    function deriveImageFileNameFromUrl(imageUrl) {
+        try {
+            const { pathname } = new URL(imageUrl);
+            const fileName = pathname.split('/').pop() || 'wapi-image';
+            if (fileName.includes('.')) return fileName;
+            return `${fileName}.png`;
+        } catch (error) {
+            const fallback = imageUrl.split('/').pop() || 'wapi-image.png';
+            return fallback.includes('.') ? fallback : `${fallback}.png`;
+        }
+    }
+
     function showDetailModal(index) {
         const imgData = currentGalleryImages[index];
         if (!imgData) return;
@@ -1471,6 +1829,82 @@
 
     function copyPrompt() {
         navigator.clipboard.writeText(document.getElementById('detail-prompt').innerText).then(() => { alert("提示词已复制！"); });
+    }
+
+    // === 文档上传与解析功能 ===
+    async function handleFileUpload(input) {
+        const file = input.files[0];
+        if (!file) return;
+
+        if (file.size > 10 * 1024 * 1024) {
+            alert('文件大小不能超过 10MB');
+            input.value = '';
+            return;
+        }
+
+        const container = document.getElementById('chat-container');
+        const loadingMsg = document.createElement('div');
+        loadingMsg.className = 'flex flex-row items-start gap-2';
+        loadingMsg.innerHTML = `
+            <div class="flex-1 min-w-0 flex justify-start">
+                <div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]">
+                    <span class="animate-pulse text-gray-500">正在解析文档 "${file.name}"...</span>
+                </div>
+            </div>
+        `;
+        container.appendChild(loadingMsg);
+        container.scrollTop = container.scrollHeight;
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('prompt', '请总结这份文档的主要内容');
+
+        try {
+            const response = await fetch(`${API_BASE}/document/analyze`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${authToken}` },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.message || '文档解析失败');
+            }
+
+            const result = await response.json();
+            
+            if (loadingMsg.parentNode) loadingMsg.remove();
+
+            // 添加用户消息（文件上传）
+            state.messages.push({ 
+                role: 'user', 
+                content: `📄 已上传文档: ${file.name}` 
+            });
+
+            // 添加 AI 分析结果
+            state.messages.push({ 
+                role: 'assistant', 
+                content: result.data.analysis 
+            });
+
+            renderChatHistory();
+
+            // 保存到后端
+            await saveMessageToBackend('user', `📄 已上传文档: ${file.name}`);
+            await saveMessageToBackend('assistant', result.data.analysis);
+
+            // 如果是新对话的第一条消息，生成标题
+            if (state.messages.length === 2) {
+                generateSmartTitle(state.chatHistoryId, state.messages);
+            }
+
+        } catch (error) {
+            console.error('文档上传失败:', error);
+            if (loadingMsg.parentNode) loadingMsg.remove();
+            alert(`文档上传失败: ${error.message}`);
+        } finally {
+            input.value = '';
+        }
     }
 
     init();
