@@ -24,6 +24,9 @@ const upload = multer({
     storage: storage,
     limits: { fileSize: FILE_SIZE_LIMIT },
     fileFilter: (req, file, cb) => {
+        // 修复中文文件名编码问题
+        file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        
         const allowedMimes = [
             'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -33,10 +36,12 @@ const upload = multer({
         const allowedExts = ['.doc', '.docx', '.txt', '.pdf'];
         
         const ext = path.extname(file.originalname).toLowerCase();
+        console.log('文件检查:', { originalname: file.originalname, mimetype: file.mimetype, ext });
+        
         if (allowedMimes.includes(file.mimetype) && allowedExts.includes(ext)) {
             cb(null, true);
         } else {
-            cb(new ValidationError('仅支持 doc、docx、txt、pdf 文档'), false);
+            cb(new ValidationError(`仅支持 doc、docx、txt、pdf 文档，不支持的类型: ${file.mimetype} (${ext})`), false);
         }
     }
 });
@@ -369,27 +374,73 @@ async function parseDocument(file) {
     }
 }
 
-// 4. 文档上传分析路由
-router.post('/document/analyze', upload.single('file'), async (req, res, next) => {
+// 4. 文档上传解析路由（不调用LLM）
+router.post('/document/parse', upload.single('file'), async (req, res, next) => {
     try {
         if (!req.file) {
             return next(new ValidationError('请上传文件'));
         }
-
-        const { prompt = '请总结这份文档的主要内容' } = req.body;
         
         // 解析文档
         const documentText = await parseDocument(req.file);
         
-        console.log(`📄 文档解析成功，长度: ${documentText.length}`);
+        // 将解析内容存储到session中
+        if (!req.session) {
+            req.session = {};
+        }
+        req.session.documentContent = {
+            fileName: req.file.originalname,
+            content: documentText,
+            truncated: documentText.length >= MAX_TEXT_LENGTH,
+            timestamp: Date.now()
+        };
+        
+        console.log(`📄 文档解析成功，长度: ${documentText.length}，已缓存到session`);
 
+        return sendSuccess(res, {
+            message: '文档解析完成',
+            data: {
+                originalFileName: req.file.originalname,
+                documentLength: documentText.length,
+                truncated: documentText.length >= MAX_TEXT_LENGTH
+            }
+        });
+
+    } catch (error) {
+        console.error('文档解析失败:', error);
+        next(error instanceof AppError ? error : new AppError('文档解析失败', 500));
+    }
+});
+
+// 5. 带文档内容的对话完成路由
+router.post('/chat/with-document', async (req, res, next) => {
+    try {
+        const { prompt } = req.body;
+        
+        if (!req.session || !req.session.documentContent) {
+            return next(new ValidationError('请先上传文档'));
+        }
+        
+        const doc = req.session.documentContent;
+        
+        // 检查session是否过期（30分钟）
+        if (Date.now() - doc.timestamp > 30 * 60 * 1000) {
+            delete req.session.documentContent;
+            return next(new ValidationError('文档已过期，请重新上传'));
+        }
+        
         // 构建给 LLM 的完整 prompt
-        const fullPrompt = `用户上传了一份文档，${prompt}
+        const fullPrompt = `用户上传了一份文档"${doc.fileName}"并提出了问题：${prompt}
+
+请基于以下文档内容回答用户的问题：
 
 文档内容：
-${documentText}
+${doc.content}
 
-请根据上述文档内容进行分析回答。`;
+要求：
+1. 请直接回答用户的问题
+2. 基于文档内容给出准确回答
+3. 如果文档内容无法回答该问题，请明确说明`;
 
         // 调用 LLM 服务
         const apiKey = process.env.AI_SERVICE_API_KEY;
@@ -426,13 +477,14 @@ ${documentText}
         const llmData = await llmResponse.json();
         const analysis = llmData.choices?.[0]?.message?.content || '分析失败';
 
+        // 清除已使用的文档内容
+        delete req.session.documentContent;
+
         return sendSuccess(res, {
             message: '文档分析完成',
             data: {
-                originalFileName: req.file.originalname,
-                documentLength: documentText.length,
                 analysis: analysis,
-                truncated: documentText.length >= MAX_TEXT_LENGTH
+                documentFileName: doc.fileName
             }
         });
 

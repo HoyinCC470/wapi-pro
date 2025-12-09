@@ -287,6 +287,9 @@
                                 <button onclick="document.getElementById('file-upload').click()" class="p-2 hover:bg-gray-100 rounded-lg transition-colors group" title="上传文档">
                                     <svg class="w-5 h-5 text-gray-500 group-hover:text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
                                 </button>
+                                <div id="uploaded-file-info" class="hidden px-3 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-lg border border-blue-200">
+                                    <span id="upload-status-text"></span>
+                                </div>
                                 <div class="relative">
                                     <button onclick="toggleModelMenu(event)" class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 text-xs font-bold text-gray-600 transition-colors group/btn" title="切换模型">
                                         <div class="w-5 h-5 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 flex items-center justify-center text-white text-[10px] shadow-sm">M</div>
@@ -1051,7 +1054,10 @@
 
         const input = document.getElementById('chat-input');
         const prompt = input.value.trim();
-        if (!prompt) return;
+        if (!prompt && !uploadedDocument) {
+            alert('请输入内容或上传文档');
+            return;
+        }
 
         abortController = new AbortController(); // 创建新控制器
         const activeController = abortController;
@@ -1074,19 +1080,22 @@
             };
         }
 
-        state.messages.push({ role: "user", content: prompt });
+        // 只有在没有上传文档时才直接添加纯文本消息
+        // 如果有文档，消息将在文档处理分支中统一添加
+        if (!uploadedDocument) {
+            state.messages.push({ role: "user", content: prompt });
+            renderChatHistory();
+        }
+        
         input.value = '';
         input.style.height = 'auto';
-        renderChatHistory();
+        
+        let ensuredChatId = null;
+        if (!uploadedDocument) {
+            ensuredChatId = await saveMessageToBackend("user", prompt);
+        } 
 
-        const ensuredChatId = await saveMessageToBackend("user", prompt); 
-
-        if (processingWorkflow === 'image' && imageGenerationContext && !imageGenerationContext.chatId) {
-            imageGenerationContext.chatId = ensuredChatId || state.chatHistoryId;
-        }
-        if (processingWorkflow === 'text' && textGenerationContext && !textGenerationContext.chatId) {
-            textGenerationContext.chatId = ensuredChatId || state.chatHistoryId;
-        }
+        // 这部分逻辑需要在文档处理完成后更新，移到文档处理分支中
 
         const container = document.getElementById('chat-container');
         
@@ -1200,6 +1209,80 @@
                 updateInputUI(false);
             }
             return;
+        } else if (uploadedDocument) {
+            // 带文档的文本工作流
+            const generatingChatId = state.chatHistoryId;
+            const userContent = `📄 已上传文档: ${uploadedDocument.fileName}${prompt ? `\n\n${prompt}` : ''}`;
+            state.messages.push({ role: "user", content: userContent });
+            renderChatHistory();
+            
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = "flex flex-row items-start gap-2";
+            loadingDiv.innerHTML = `<div class="flex-1 min-w-0 flex justify-start"><div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]"><span class="animate-pulse text-gray-500" id="loading-text">正在分析文档...</span></div></div>`;
+            container.appendChild(loadingDiv);
+            container.scrollTop = container.scrollHeight;
+
+            try {
+                const response = await fetch(`${API_BASE}/chat/with-document`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+                    body: JSON.stringify({
+                        prompt: prompt || '请分析这份文档'
+                    }),
+                    signal: activeController.signal
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || '文档分析失败');
+                }
+
+                const result = await response.json();
+                
+                // 移除加载动画
+                if (loadingDiv && loadingDiv.parentNode) loadingDiv.remove();
+
+                // 添加 AI 回复
+                state.messages.push({ role: "assistant", content: result.data.analysis });
+                renderChatHistory();
+                
+                // 保存到后端
+                ensuredChatId = await saveMessageToBackend("user", userContent);
+                await saveMessageToBackend("assistant", result.data.analysis);
+                
+                // 设置文档处理分支的 chatId
+                if (textGenerationContext && !textGenerationContext.chatId) {
+                    textGenerationContext.chatId = ensuredChatId || state.chatHistoryId;
+                }
+
+                // 清除已上传文档
+                clearUploadedDocument();
+
+                // 生成标题
+                if (state.messages.length === 2) {
+                    generateSmartTitle(state.chatHistoryId, state.messages);
+                }
+
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log("用户手动停止生成");
+                } else {
+                    console.error('文档分析失败:', error);
+                    if (loadingDiv && loadingDiv.parentNode) {
+                        loadingDiv.remove();
+                    }
+                    alert(`文档分析失败: ${error.message}`);
+                }
+            } finally {
+                if (abortController === activeController) {
+                    abortController = null;
+                }
+                isChatProcessing = false;
+                processingWorkflow = null;
+                textGenerationContext = null;
+                updateInputUI(false);
+            }
+            return;
         }
 
         // 文本对话流程
@@ -1218,6 +1301,11 @@
         };
 
         let assistantMessage = null;
+        
+        // 为纯文本处理分支设置 chatId
+        if (textGenerationContext && !textGenerationContext.chatId && ensuredChatId) {
+            textGenerationContext.chatId = ensuredChatId;
+        }
 
         try {
             const context = targetMessages.map(m=>({role:m.role, content:m.content})).slice(-10);
@@ -1295,14 +1383,32 @@
                 }
             }
 
-            if (assistantMessage && !assistantMessage.content) {
+            if (assistantMessage && !assistantMessage.content && fullResponse.trim()) {
                 assistantMessage.content = fullResponse;
             }
-            if (assistantMessage && assistantMessage.content) {
+            if (assistantMessage && assistantMessage.content.trim()) {
                 await saveMessageToBackend("assistant", assistantMessage.content, targetChatId);
+            } else if (assistantMessage && !assistantMessage.content.trim()) {
+                // 如果内容为空或只有空格，从消息数组中移除这个空消息
+                const index = targetMessages.indexOf(assistantMessage);
+                if (index > -1) {
+                    targetMessages.splice(index, 1);
+                }
             }
 
             const finishedInCurrentChat = shouldDisplayInCurrentChat();
+            
+            // 如果内容为空，确保不显示空气泡
+            if (assistantMessage && !assistantMessage.content.trim()) {
+                const index = targetMessages.indexOf(assistantMessage);
+                if (index > -1) {
+                    targetMessages.splice(index, 1);
+                }
+                if (finishedInCurrentChat) {
+                    renderChatHistory();
+                }
+            }
+            
             if (!finishedInCurrentChat) {
                 await loadChatList();
             }
@@ -1831,6 +1937,9 @@
         navigator.clipboard.writeText(document.getElementById('detail-prompt').innerText).then(() => { alert("提示词已复制！"); });
     }
 
+    // 全局状态：已上传的文档信息
+    let uploadedDocument = null;
+
     // === 文档上传与解析功能 ===
     async function handleFileUpload(input) {
         const file = input.files[0];
@@ -1842,25 +1951,17 @@
             return;
         }
 
-        const container = document.getElementById('chat-container');
-        const loadingMsg = document.createElement('div');
-        loadingMsg.className = 'flex flex-row items-start gap-2';
-        loadingMsg.innerHTML = `
-            <div class="flex-1 min-w-0 flex justify-start">
-                <div class="bg-white border border-gray-100 px-5 py-3.5 rounded-2xl rounded-tl-sm text-sm shadow-sm max-w-[50%]">
-                    <span class="animate-pulse text-gray-500">正在解析文档 "${file.name}"...</span>
-                </div>
-            </div>
-        `;
-        container.appendChild(loadingMsg);
-        container.scrollTop = container.scrollHeight;
+        // 显示正在解析状态
+        const fileInfoEl = document.getElementById('uploaded-file-info');
+        const statusTextEl = document.getElementById('upload-status-text');
+        statusTextEl.textContent = '正在解析...';
+        fileInfoEl.classList.remove('hidden');
 
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('prompt', '请总结这份文档的主要内容');
 
         try {
-            const response = await fetch(`${API_BASE}/document/analyze`, {
+            const response = await fetch(`${API_BASE}/document/parse`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${authToken}` },
                 body: formData
@@ -1873,37 +1974,31 @@
 
             const result = await response.json();
             
-            if (loadingMsg.parentNode) loadingMsg.remove();
+            // 保存已上传文档信息到全局状态
+            uploadedDocument = {
+                fileName: result.data.originalFileName,
+                truncated: result.data.truncated
+            };
 
-            // 添加用户消息（文件上传）
-            state.messages.push({ 
-                role: 'user', 
-                content: `📄 已上传文档: ${file.name}` 
-            });
-
-            // 添加 AI 分析结果
-            state.messages.push({ 
-                role: 'assistant', 
-                content: result.data.analysis 
-            });
-
-            renderChatHistory();
-
-            // 保存到后端
-            await saveMessageToBackend('user', `📄 已上传文档: ${file.name}`);
-            await saveMessageToBackend('assistant', result.data.analysis);
-
-            // 如果是新对话的第一条消息，生成标题
-            if (state.messages.length === 2) {
-                generateSmartTitle(state.chatHistoryId, state.messages);
-            }
+            // 更新UI显示为成功状态
+            statusTextEl.textContent = `已上传 ${result.data.originalFileName}`;
 
         } catch (error) {
             console.error('文档上传失败:', error);
-            if (loadingMsg.parentNode) loadingMsg.remove();
             alert(`文档上传失败: ${error.message}`);
+            // 失败时隐藏状态
+            fileInfoEl.classList.add('hidden');
         } finally {
             input.value = '';
+        }
+    }
+
+    // 清除已上传文档
+    function clearUploadedDocument() {
+        uploadedDocument = null;
+        const fileInfoEl = document.getElementById('uploaded-file-info');
+        if (fileInfoEl) {
+            fileInfoEl.classList.add('hidden');
         }
     }
 

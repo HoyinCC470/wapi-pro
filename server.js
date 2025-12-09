@@ -93,6 +93,18 @@ const authLimiter = rateLimit({
 
 app.use(express.json({ limit: '10mb' })); // 限制请求体大小
 app.use(express.urlencoded({ extended: true, limit: '10mb' })); // 支持 form-data
+
+// Session 配置（用于文档内容缓存）
+const session = require('express-session');
+app.use(session({
+    secret: process.env.JWT_SECRET || 'wapi-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 30 * 60 * 1000 // 30分钟
+    }
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // 应用速率限制（认证接口使用更严格的限制）

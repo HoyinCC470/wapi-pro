@@ -1,5 +1,10 @@
 node_modules
 .env
 .DS_Store
+checkpoint.md
+CODE_REVIEW.md
+IMPROVEMENTS.md
+MONGODB_CONNECTION_TROUBLESHOOTING.md
+QUICK_START.md
 public/uploads/*
 !public/uploads/.gitkeep
